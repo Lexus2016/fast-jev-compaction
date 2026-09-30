@@ -13,5 +13,5 @@
       "claude-code": ["./types/claude-code.d.ts"]
     }
   },
-  "include": ["hooks", "types"]
+  "include": ["hooks", "types", "tests/host"]
 }
