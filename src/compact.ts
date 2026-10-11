@@ -26,6 +26,9 @@ export const DEFAULT_OPTIONS: ResolvedCompactOptions = {
 /** Tokens the request envelope (`model`, key names) adds around state and questions. */
 const REQUEST_OVERHEAD_TOKENS = 20;
 
+/** Jev answers between 1 and 128 questions per request; each call asks two. */
+const MAX_CALLS_PER_REQUEST = 64;
+
 function finite(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -67,8 +70,9 @@ export function questionsFor(call: ToolCall): JevQuestions {
 }
 
 /**
- * Splits the candidate calls into batches whose questions, together with the
- * (always complete) state, fit one request.
+ * Splits the candidate calls into batches that Jev accepts: at most
+ * `MAX_CALLS_PER_REQUEST` calls, whose questions together with the (always
+ * complete) state fit one request.
  */
 export function batchCalls(
   calls: readonly ToolCall[],
@@ -81,7 +85,10 @@ export function batchCalls(
   let currentTokens = 0;
   for (const call of calls) {
     const tokens = estimateTokens(JSON.stringify(questionsFor(call)));
-    if (current.length > 0 && currentTokens + tokens > budget) {
+    if (
+      current.length > 0 &&
+      (currentTokens + tokens > budget || current.length === MAX_CALLS_PER_REQUEST)
+    ) {
       batches.push(current);
       current = [];
       currentTokens = 0;

@@ -271,6 +271,17 @@ describe('question batching', () => {
   it('throws when a single question does not fit', () => {
     expect(() => batchCalls(calls, 29_990, options)).toThrow(/no room/);
   });
+
+  it('never asks more questions in one request than Jev accepts', () => {
+    const many: ToolCall[] = Array.from({ length: 200 }, (_, i) => ({
+      ...calls[0]!,
+      id: `t${i + 1}`,
+      tool_use_id: `tool-${i + 1}`,
+    }));
+    const batches = batchCalls(many, 1000, options);
+    expect(batches.flat()).toHaveLength(200);
+    for (const batch of batches) expect(batch.length * 2).toBeLessThanOrEqual(128);
+  });
 });
 
 describe('decisions', () => {
