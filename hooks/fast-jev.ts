@@ -24,6 +24,7 @@ const HOOK_DEFAULTS = {
   minReductionRatio: 0.25,
   model: DEFAULT_MODEL,
   compactionTimeoutMs: 15_000,
+  logDecisions: false,
 };
 
 export type HookFetchInit = {
@@ -47,6 +48,7 @@ export type HookConfig = CompactOptions & {
   minReductionRatio: number;
   model: string;
   compactionTimeoutMs: number;
+  logDecisions: boolean;
 };
 
 function optionNumber(options: PluginOptions, key: string, fallback: number): number {
@@ -82,6 +84,10 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
     ),
     model: optionString(options, 'model') ?? HOOK_DEFAULTS.model,
     compactionTimeoutMs: optionNumber(options, 'compactionTimeoutMs', HOOK_DEFAULTS.compactionTimeoutMs),
+    logDecisions:
+      typeof options['logDecisions'] === 'boolean'
+        ? options['logDecisions']
+        : HOOK_DEFAULTS.logDecisions,
   };
   if (config.compactionTimeoutMs <= 0) config.compactionTimeoutMs = HOOK_DEFAULTS.compactionTimeoutMs;
   const apiKey = optionString(options, 'apiKey');
@@ -308,7 +314,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         config.compactionTimeoutMs,
         (ms, options) => $.clock.sleep(ms, options),
       );
-      for (const line of decisionLogLines(result)) $.ui.log(line);
+      if (config.logDecisions) for (const line of decisionLogLines(result)) $.ui.log(line);
       if (reductionRatio(result) < config.minReductionRatio) {
         notify(
           $,
