@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { jevAsker } from '../hooks/fast-jev.js';
 import { JevClient } from '../src/client.js';
-import { REDACTED, redactDeep, redactSecrets } from '../src/redact.js';
+import { REDACTED, redactSecrets } from '../src/redact.js';
+import { buildJevRequest } from '../src/request.js';
 import type { JevQuestions } from '../src/types.js';
 
 // Fake credentials, assembled at run time so no credential-shaped literal sits in the repo.
@@ -56,10 +57,16 @@ describe('redactSecrets', () => {
     expect(out.count).toBe(0);
   });
 
-  it('redacts every string inside nested values without mutating the input', () => {
+  it('redacts every string inside nested values as the request is built, without mutating the input', () => {
     const input = { a: [{ cmd: `x ${SECRETS.ghlPit}` }], n: 3 };
-    const { value, count } = redactDeep(input);
-    expect(JSON.stringify(value)).not.toContain(SECRETS.ghlPit);
+    let count = 0;
+    const request = buildJevRequest({ apiKey: 'k' }, input, {}, (text) => {
+      const out = redactSecrets(text);
+      count += out.count;
+      return out.text;
+    });
+    expect(request.body).not.toContain(SECRETS.ghlPit);
+    expect(JSON.parse(request.body).state.n).toBe(3);
     expect(count).toBe(1);
     expect(input.a[0]!.cmd).toContain(SECRETS.ghlPit);
   });

@@ -290,22 +290,3 @@ export function redactSecrets(text: string, known: readonly string[] = []): Reda
   return { text: out, count };
 }
 
-/** Redacts every string inside a JSON-shaped value; returns a new value and the total count. */
-export function redactDeep<T>(value: T, known: readonly string[] = []): { value: T; count: number } {
-  let count = 0;
-  const walk = (v: unknown): unknown => {
-    if (typeof v === 'string') {
-      const r = redactSecrets(v, known);
-      count += r.count;
-      return r.text;
-    }
-    if (Array.isArray(v)) return v.map(walk);
-    if (v && typeof v === 'object') {
-      const o: Record<string, unknown> = {};
-      for (const [k, x] of Object.entries(v)) o[k] = walk(x);
-      return o;
-    }
-    return v;
-  };
-  return { value: walk(value) as T, count };
-}

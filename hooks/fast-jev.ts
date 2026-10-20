@@ -91,16 +91,15 @@ export function mayUseBuiltin(trigger: string | undefined, mode: BuiltinFallback
   return trigger === 'auto';
 }
 
+/** The numeric `userConfig` values passed straight to the library. */
+const NUMERIC_LIBRARY_OPTIONS: ReadonlyArray<
+  'keepThreshold' | 'preserveRecentMessages' | 'maxStateTokens' | 'maxRequestTokens' | 'truncateHeadChars'
+> = ['keepThreshold', 'preserveRecentMessages', 'maxStateTokens', 'maxRequestTokens', 'truncateHeadChars'];
+
 /** Reads the plugin's `userConfig` values; anything missing takes the defaults. */
 export function resolveHookConfig(options: PluginOptions): HookConfig {
   const numbers: Partial<Omit<CompactOptions, 'goal'>> = {};
-  for (const key of [
-    'keepThreshold',
-    'preserveRecentMessages',
-    'maxStateTokens',
-    'maxRequestTokens',
-    'truncateHeadChars',
-  ] as const) {
+  for (const key of NUMERIC_LIBRARY_OPTIONS) {
     const value = options[key];
     if (typeof value === 'number' && Number.isFinite(value)) numbers[key] = value;
   }

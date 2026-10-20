@@ -11,8 +11,10 @@ import type {
 export const STATE_CONTEXT =
   'A coding assistant conversation is being compacted to free context. `history` is the whole conversation so far, oldest first; tool outputs are replaced by a short `result` note and long texts may be abridged. Each question asks whether one tool call, or the full output of that call, still needs to stay in the history verbatim. Whatever is not kept is deleted permanently, but the assistant can always re-run a tool or re-read a file.';
 
-/** Successive caps on the serialised tool input included per call. */
-const INPUT_CHARS = [1000, 200, 60] as const;
+/** Successive caps on the serialised tool input included per call: in full, then smaller, then on one line. */
+const INPUT_CHARS_FULL = 1000;
+const INPUT_CHARS_SMALLER: readonly number[] = [200, 60];
+const INPUT_CHARS_ONE_LINE = 60;
 const TEXT_HEAD = 400;
 const TEXT_TAIL = 150;
 
@@ -195,7 +197,7 @@ function compactCall(call: ToolCall): string {
       return `${key}=${text.replace(/\s+/g, ' ')}`;
     })
     .join(' ');
-  return `${call.id} ${call.tool} ${truncate(input, INPUT_CHARS[2])} → ${
+  return `${call.id} ${call.tool} ${truncate(input, INPUT_CHARS_ONE_LINE)} → ${
     call.isError ? 'error' : 'ok'
   } ${call.resultChars}ch`;
 }
@@ -206,17 +208,24 @@ function compactCall(call: ToolCall): string {
  */
 function mergeCallRuns(history: readonly HistoryEntry[], pinned: (e: HistoryEntry) => boolean): HistoryEntry[] {
   const merged: HistoryEntry[] = [];
+  // The one-line calls of an unpinned, text-free entry: what can be folded.
+  const callLines = (e: HistoryEntry): string[] | undefined =>
+    !pinned(e) && e.text.length === 0 && isStringArray(e.tool_calls) ? e.tool_calls : undefined;
   for (const entry of history) {
     const previous = merged[merged.length - 1];
-    const foldable = (e: HistoryEntry): boolean =>
-      !pinned(e) && e.text.length === 0 && typeof e.tool_calls?.[0] === 'string';
-    if (previous && foldable(previous) && foldable(entry) && previous.role === entry.role) {
-      previous.tool_calls = [...(previous.tool_calls as string[]), ...(entry.tool_calls as string[])];
+    const before = previous && previous.role === entry.role ? callLines(previous) : undefined;
+    const own = callLines(entry);
+    if (previous && before && own) {
+      previous.tool_calls = [...before, ...own];
       continue;
     }
     merged.push({ ...entry });
   }
   return merged;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === 'string');
 }
 
 function callsByMessage(calls: readonly ToolCall[]): Map<number, ToolCall[]> {
@@ -310,10 +319,10 @@ export function fitState(
     perEntry[index] = now;
   };
 
-  rebuild(INPUT_CHARS[0]);
+  rebuild(INPUT_CHARS_FULL);
   if (fits()) return fitted(history, tokens, 'full');
 
-  for (const limit of INPUT_CHARS.slice(1)) {
+  for (const limit of INPUT_CHARS_SMALLER) {
     rebuild(limit);
     if (fits()) return fitted(history, tokens, `inputs<=${limit}`);
   }

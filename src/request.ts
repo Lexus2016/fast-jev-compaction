@@ -22,11 +22,15 @@ const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[
  * tool output). Working on the strings, not the JSON text, leaves a literal
  * `\ud800` that a tool printed as it is.
  */
-function wellFormed(_key: string, value: unknown): unknown {
-  return typeof value === 'string' ? value.replace(LONE_SURROGATE, '�') : value;
+function wellFormed(text: string): string {
+  return text.replace(LONE_SURROGATE, '�');
 }
 
-/** The HTTP request for one Jev call, for any fetch-like transport. */
+/**
+ * The HTTP request for one Jev call, for any fetch-like transport. `transform`
+ * rewrites every string of the body as it is serialised (the asker redacts
+ * secrets with it); the inputs themselves are left as they are.
+ */
 export function buildJevRequest(
   params: {
     apiKey: string;
@@ -35,6 +39,7 @@ export function buildJevRequest(
   },
   state: JevState,
   questions: JevQuestions,
+  transform: (text: string) => string = (text) => text,
 ): JevRequest {
   return {
     url: params.baseUrl ?? SYSTEM_ONE_URL,
@@ -49,7 +54,7 @@ export function buildJevRequest(
         state,
         questions,
       },
-      wellFormed,
+      (_key, value: unknown) => (typeof value === 'string' ? wellFormed(transform(value)) : value),
     ),
   };
 }
