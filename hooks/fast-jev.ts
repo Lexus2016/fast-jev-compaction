@@ -25,7 +25,7 @@ const HOOK_DEFAULTS = {
   compactAtPercent: 60,
   minReductionRatio: 0.25,
   model: DEFAULT_MODEL,
-  compactionTimeoutMs: 15_000,
+  compactionTimeoutMs: 60_000,
   logDecisions: false,
 };
 
@@ -102,8 +102,9 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
 
 /**
  * A `JevAsker` over the engine's `$.http.fetch`. Secrets are redacted from what
- * is sent (`onRedact` gets the count). Every batch of one compaction shares the
- * same state object, so the state is redacted once, not once per batch.
+ * is sent (`onRedact` gets the count). The batches of one compaction share a
+ * state object (one per window in a long session), so each state is redacted
+ * once, not once per batch.
  */
 export function jevAsker(
   fetchFn: HookFetch,
@@ -111,17 +112,21 @@ export function jevAsker(
   model: string,
   onRedact: (count: number) => void = () => {},
 ): JevAsker {
-  let redacted: { source: JevState; value: JevState } | undefined;
+  const redacted = new WeakMap<object, JevState>();
+  const redactState = (state: JevState): JevState => {
+    const cached = typeof state === 'object' ? redacted.get(state) : undefined;
+    if (cached !== undefined) return cached;
+    const safe = redactDeep(state, [apiKey]);
+    if (typeof state === 'object') redacted.set(state, safe.value);
+    onRedact(safe.count);
+    return safe.value;
+  };
   return {
     async ask(state, questions) {
-      if (redacted?.source !== state) {
-        const safe = redactDeep(state, [apiKey]);
-        redacted = { source: state, value: safe.value };
-        onRedact(safe.count);
-      }
+      const safeState = redactState(state);
       const safeQuestions = redactDeep(questions, [apiKey]);
       if (safeQuestions.count > 0) onRedact(safeQuestions.count);
-      const request = buildJevRequest({ apiKey, model }, redacted.value, safeQuestions.value);
+      const request = buildJevRequest({ apiKey, model }, safeState, safeQuestions.value);
       const response = await fetchFn(request.url, {
         method: request.method,
         headers: request.headers,
@@ -244,6 +249,7 @@ export function summarize(result: CompactResult): string {
     stats.callsStubbed > 0 ? `${stats.callsStubbed} calls stubbed` : '',
     stats.callsDropped > 0 ? `${stats.callsDropped} call_dropped` : '',
     stats.pinned > 0 ? `${stats.pinned} pinned` : '',
+    stats.settled > 0 ? `${stats.settled} settled` : '',
   ].filter(Boolean);
   return `${percent(reductionRatio(result))} reduction; ${
     parts.join(', ') || 'no tool calls'

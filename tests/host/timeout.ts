@@ -23,7 +23,7 @@ function host(on: On) {
   const state = { stall: true, fetches: 0, summaries: 0 };
   on('http.fetch', async (_$, event) => {
     state.fetches += 1;
-    if (state.stall) await clock.sleep(60_000);
+    if (state.stall) await clock.sleep(120_000);
     const { questions } = JSON.parse(event.init?.body ?? '{}');
     return { value: {
       status: 200, ok: true, headers: {},
@@ -49,21 +49,25 @@ test('deadline skips plugin compaction; late responses cannot install it', async
   });
   await clock.settle();
   expect(state.fetches).toBe(1);
-  await clock.advance(14_999);
+  await clock.advance(59_999);
   expect(settled).toBe(false);
   await clock.advance(1);
   const result = await pending;
   expect(state.summaries).toBe(0);
-  expect(result.skip).toBe('fast-jev-compaction: Jev compaction timed out after 15000ms; conversation left unchanged');
+  expect(result.skip).toBe('fast-jev-compaction: Jev compaction timed out after 60000ms; conversation left unchanged');
 
   state.stall = false;
   const retried = await $.session.compact({ trigger: 'plugin', messages });
   expect(state.fetches).toBe(2);
   expect(state.summaries).toBe(0);
   expect(retried.skip).toBeUndefined();
-  expect(retried.messages?.length).toBeLessThan(messages.length);
+  // Calls Jev rates unneeded stay as stubs: as many messages, their outputs replaced by a note.
+  expect(retried.messages?.length).toBe(messages.length);
+  expect(retried.messages?.[2]?.toolResults?.[0]?.text).toBe(
+    '[fast-jev-compaction removed the 2000-char output of this call; re-run the tool if needed]',
+  );
   expect(retried.messages?.[0]?.text).toBe('Continue the task.');
-  await clock.advance(60_000);
+  await clock.advance(120_000);
   expect(state.summaries).toBe(0);
   expect(result.messages).toBeUndefined();
 });
@@ -73,12 +77,12 @@ for (const trigger of ['manual', 'auto'] as const) {
     const { state, clock } = host(on);
     const pending = $.session.compact({ trigger, messages: transcript() });
     await clock.settle();
-    await clock.advance(15_000);
+    await clock.advance(60_000);
     const result = await pending;
     expect(state.fetches).toBe(1);
     expect(state.summaries).toBe(1);
     expect(result.messages?.[0]?.text).toBe('built-in summary');
-    await clock.advance(60_000);
+    await clock.advance(120_000);
     expect(state.summaries).toBe(1);
   });
 }

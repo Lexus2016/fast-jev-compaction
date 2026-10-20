@@ -1,11 +1,19 @@
 import { noulAnswer } from './request.js';
-import { collectToolCalls, estimateTokens, fitState } from './state.js';
+import {
+  collectToolCalls,
+  estimateTokens,
+  fitState,
+  goalFromMessages,
+  HistoryTooLargeError,
+  isPinned,
+} from './state.js';
 import type {
   CallAnswer,
   CallDecision,
   CompactOptions,
   CompactResult,
   CompactionState,
+  FittedState,
   JevAsker,
   JevQuestions,
   Message,
@@ -275,12 +283,111 @@ function count(decisions: readonly CallDecision[], reason: CallDecision['reason'
   return decisions.filter((decision) => decision.reason === reason).length;
 }
 
+/** Jev requests in flight at once within one compaction. */
+const MAX_CONCURRENT_REQUESTS = 4;
+
+/**
+ * Maps `items` through `fn` with at most `limit` calls in flight, keeping the
+ * order. On the first failure no further item is started and the failure is
+ * thrown once the calls in flight have settled.
+ */
+async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  let failed = false;
+  const worker = async (): Promise<void> => {
+    while (!failed && next < items.length) {
+      const index = next++;
+      try {
+        results[index] = await fn(items[index]!);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+type StateGroup = { state: FittedState; calls: ToolCall[] };
+
+/**
+ * One state for all candidates when the history fits `maxStateTokens`. When it
+ * does not (long sessions), the candidates are split into contiguous windows,
+ * halved until each window's state fits: a window's state keeps the goal, the
+ * first message, the pinned newest messages and its own messages in full, and
+ * leaves the rest of the history out. Relevance of an old call depends mostly
+ * on the goal and the recent turns, which every window carries. A call whose
+ * window cannot fit even alone is returned in `unasked`; it gets no answer and
+ * therefore stays, like any call Jev was not asked about. Adapted from
+ * deadczarvc (Mikhail Nemerov), upstream PR #119.
+ */
+export function stateGroups(
+  messages: readonly Message[],
+  calls: readonly ToolCall[],
+  candidates: readonly ToolCall[],
+  options: ResolvedCompactOptions,
+): { groups: StateGroup[]; unasked: ToolCall[]; stage: string } {
+  try {
+    const state = fitState(messages, calls, options);
+    return { groups: [{ state, calls: [...candidates] }], unasked: [], stage: state.stage };
+  } catch (error) {
+    if (!(error instanceof HistoryTooLargeError)) throw error;
+  }
+  const windowOptions = { ...options, goal: options.goal || goalFromMessages(messages) };
+  const groups: StateGroup[] = [];
+  const unasked: ToolCall[] = [];
+  const fit = (group: ToolCall[]): void => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const call of group) {
+      lo = Math.min(lo, call.callIndex);
+      hi = Math.max(hi, call.resultIndex);
+    }
+    const inWindow = new Set(group.map((call) => call.id));
+    const view = messages.map((message, i) =>
+      (i >= lo && i <= hi) || isPinned(i, messages.length, options.preserveRecentMessages)
+        ? message
+        : { ...message, text: '' },
+    );
+    try {
+      const state = fitState(
+        view,
+        calls.filter((call) => call.pinned || inWindow.has(call.id)),
+        windowOptions,
+      );
+      groups.push({ state, calls: group });
+    } catch (error) {
+      if (!(error instanceof HistoryTooLargeError)) throw error;
+      if (group.length === 1) {
+        unasked.push(group[0]!);
+        return;
+      }
+      const half = Math.ceil(group.length / 2);
+      fit(group.slice(0, half));
+      fit(group.slice(half));
+    }
+  };
+  const half = Math.ceil(candidates.length / 2);
+  fit(candidates.slice(0, half));
+  if (candidates.length > half) fit(candidates.slice(half));
+  const stage = `windows:${groups.length}${unasked.length > 0 ? ` unasked:${unasked.length}` : ''}`;
+  return { groups, unasked, stage };
+}
+
 /**
  * Compacts a transcript by asking Jev, for every tool call outside the pinned
  * first and newest messages, whether the call and whether its result must
  * stay. The whole history (results omitted, fitted into `maxStateTokens`) is
- * sent as state with every batch of questions. Throws when Jev fails or the
- * history cannot be fitted; the caller decides whether to fall back.
+ * sent as state with every batch of questions; when it cannot be fitted, the
+ * calls are asked in windows (see `stateGroups`). At most
+ * `MAX_CONCURRENT_REQUESTS` requests run at once. Throws when Jev fails; the
+ * caller decides whether to fall back.
  */
 export async function compact(
   messages: readonly Message[],
@@ -290,24 +397,32 @@ export async function compact(
   const started = Date.now();
   const resolved = resolveOptions(options);
   const calls = collectToolCalls(messages, resolved.preserveRecentMessages);
-  const candidates = calls.filter((call) => !call.pinned);
+  const candidates = calls.filter((call) => !call.pinned && !call.settled);
   const charsBefore = messages.reduce((sum, message) => sum + messageChars(message), 0);
 
   let fitted: { tokens: number; stage: string } = { tokens: 0, stage: '' };
-  let batches: ToolCall[][] = [];
+  let requests = 0;
   const answers = new Map<string, CallAnswer>();
   if (candidates.length > 0) {
-    const state = fitState(messages, calls, resolved);
-    fitted = state;
-    batches = batchCalls(candidates, state.tokens, resolved);
-    const answered = await Promise.all(
-      batches.map((batch) => askBatch(asker, state.state, batch)),
+    const { groups, stage } = stateGroups(messages, calls, candidates, resolved);
+    fitted = { tokens: groups.reduce((max, group) => Math.max(max, group.state.tokens), 0), stage };
+    const jobs = groups.flatMap((group) =>
+      batchCalls(group.calls, group.state.tokens, resolved).map((batch) => ({
+        state: group.state.state,
+        batch,
+      })),
+    );
+    requests = jobs.length;
+    const answered = await mapLimit(jobs, MAX_CONCURRENT_REQUESTS, (job) =>
+      askBatch(asker, job.state, job.batch),
     );
     for (const map of answered) for (const [id, answer] of map) answers.set(id, answer);
   }
 
-  const decisions = calls.map((call) =>
-    decideCall(call, answers.get(call.id) ?? { keepCall: 1, keepResult: 1 }, resolved),
+  const decisions = calls.map((call): CallDecision =>
+    call.settled && !call.pinned
+      ? { id: call.id, tool: call.tool, keepCall: 1, keepResult: 1, action: 'keep', reason: 'settled' }
+      : decideCall(call, answers.get(call.id) ?? { keepCall: 1, keepResult: 1 }, resolved),
   );
   const kept = applyDecisions(
     messages,
@@ -329,9 +444,10 @@ export async function compact(
       callsDropped: count(decisions, 'call_dropped'),
       callsStubbed: count(decisions, 'call_stubbed'),
       pinned: count(decisions, 'pinned'),
+      settled: count(decisions, 'settled'),
       stateTokens: fitted.tokens,
       stateStage: fitted.stage,
-      requests: batches.length,
+      requests,
       ms: Date.now() - started,
     },
   };

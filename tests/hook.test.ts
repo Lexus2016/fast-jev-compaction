@@ -86,7 +86,7 @@ function jevFetch(answer: (name: string) => number, bodies: string[] = []) {
 
 describe('hook config', () => {
   it('reads userConfig values and falls back to defaults', () => {
-    expect(resolveHookConfig({})).toEqual({ compactAtPercent: 60, minReductionRatio: 0.25, model: 'jev-latest', compactionTimeoutMs: 15000, logDecisions: false });
+    expect(resolveHookConfig({})).toEqual({ compactAtPercent: 60, minReductionRatio: 0.25, model: 'jev-latest', compactionTimeoutMs: 60000, logDecisions: false });
     expect(
       resolveHookConfig({ apiKey: 'k', keepThreshold: 0.3, maxStateTokens: 1000, model: 'jev-x', goal: 'g', compactAtPercent: 'no', logDecisions: true, dropCalls: true }),
     ).toEqual({
@@ -97,7 +97,7 @@ describe('hook config', () => {
       goal: 'g',
       compactAtPercent: 60,
       minReductionRatio: 0.25,
-      compactionTimeoutMs: 15000,
+      compactionTimeoutMs: 60000,
       logDecisions: true,
       dropCalls: true,
     });
@@ -108,7 +108,7 @@ describe('compaction deadline', () => {
   it('accepts a positive timeout and defaults invalid values', () => {
     expect(resolveHookConfig({ compactionTimeoutMs: 2500 }).compactionTimeoutMs).toBe(2500);
     for (const value of [0, -1, NaN, Infinity, '15000']) {
-      expect(resolveHookConfig({ compactionTimeoutMs: value }).compactionTimeoutMs).toBe(15000);
+      expect(resolveHookConfig({ compactionTimeoutMs: value }).compactionTimeoutMs).toBe(60000);
     }
   });
 

@@ -123,6 +123,14 @@ export function isPinned(
  * Pairs every tool_use with its tool_result by `tool_use_id`. Calls without a
  * result are not candidates (there is nothing to drop yet).
  */
+/**
+ * The note an earlier compaction left at the end of a result it reduced (a
+ * cut head or a stub). Such a result is final: asking again could at most
+ * trade a head for a note, at the price of a request per round.
+ */
+export const REDUCED_RESULT_NOTE =
+  /\[fast-jev-compaction (?:removed the \d+-char output of this call|truncated \d+ chars of this tool result(?: \(error\))?); re-run the tool if needed\]$/;
+
 export function collectToolCalls(
   messages: readonly Message[],
   preserveRecentMessages: number,
@@ -150,6 +158,7 @@ export function collectToolCalls(
         pinned:
           isPinned(callIndex, messages.length, preserveRecentMessages) ||
           isPinned(found.index, messages.length, preserveRecentMessages),
+        settled: REDUCED_RESULT_NOTE.test(found.result.text),
       });
     }
   });
@@ -362,7 +371,13 @@ export function fitState(
   tokens = baseTokens + perEntry.reduce((sum, n) => sum + n, 0);
   if (fits()) return fitted(history, tokens, 'old calls merged');
 
-  throw new Error(
-    `history too large for Jev (~${tokens} tokens after truncation, limit ${options.maxStateTokens})`,
-  );
+  throw new HistoryTooLargeError(tokens, options.maxStateTokens);
+}
+
+/** Thrown by `fitState` when even the last fitting stage exceeds `maxStateTokens`. */
+export class HistoryTooLargeError extends Error {
+  constructor(tokens: number, limit: number) {
+    super(`history too large for Jev (~${tokens} tokens after truncation, limit ${limit})`);
+    this.name = 'HistoryTooLargeError';
+  }
 }

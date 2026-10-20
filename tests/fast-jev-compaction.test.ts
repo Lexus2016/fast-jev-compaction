@@ -9,6 +9,7 @@ import {
   decideCall,
   estimateTokens,
   fitState,
+  HistoryTooLargeError,
   JevClient,
   parseJevResponse,
   reductionRatio,
@@ -631,5 +632,116 @@ describe('surrogate-safe cuts (#128)', () => {
       q: { type: 'noul', instructions: 'x' },
     });
     expect(JSON.parse(paired.body).state).toEqual({ ok: '🔥' });
+  });
+});
+
+describe('windowed states when the history does not fit', () => {
+  // Ported with the windowing from deadczarvc (Mikhail Nemerov), upstream PR #119.
+  function long(n: number): Message[] {
+    const out: Message[] = [message('user', 'Fix the failing build; never touch src/generated.')];
+    for (let i = 0; i < n; i++) {
+      out.push(message('assistant', `Step ${i}: ${'checking the next module and its callers '.repeat(6)}`));
+      out.push(call(`w${i}`, 'Bash', { command: `npm test -- module${i}` }, ''));
+      out.push(result(`w${i}`, `module${i}: 3 passed, 1 failed (exit code 1)\n${'x'.repeat(400)}`));
+    }
+    out.push(message('user', 'go on'));
+    return out;
+  }
+  const options = { maxStateTokens: 3_000, maxRequestTokens: 6_000, preserveRecentMessages: 2 };
+
+  it('splits into windows that each fit, and every candidate is asked', async () => {
+    const messages = long(400);
+    const calls = collectToolCalls(messages, 2);
+    expect(() => fitState(messages, calls, resolveOptions(options))).toThrow(HistoryTooLargeError);
+    const seen: Seen[] = [];
+    const out = await compact(messages, fakeJev(() => 0.1, seen), options);
+    expect(out.stats.stateStage).toMatch(/^windows:\d+$/);
+    expect(out.stats.stateTokens).toBeLessThanOrEqual(options.maxStateTokens);
+    const asked = new Set(seen.flatMap((s) => s.questions).filter((q) => q.startsWith('call_')));
+    expect(asked.size).toBe(calls.filter((c) => !c.pinned).length);
+    expect(out.stats.requests).toBe(seen.length);
+  });
+
+  it('keeps a call that no window can fit, instead of throwing', async () => {
+    const messages = long(5);
+    const seen: Seen[] = [];
+    const out = await compact(messages, fakeJev(() => 0.1, seen), {
+      ...options,
+      maxStateTokens: 200,
+      goal: 'g'.repeat(5_000),
+    });
+    expect(seen.length).toBe(0);
+    expect(out.stats.stateStage).toMatch(/unasked:\d+/);
+    expect(out.decisions.every((d) => d.action === 'keep')).toBe(true);
+    out.messages.forEach((m, i) => expect(m).toBe(messages[i]));
+  });
+
+  it('keeps at most four Jev requests in flight', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    let requests = 0;
+    const asker: JevAsker = {
+      async ask(_state, questions) {
+        requests += 1;
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        inFlight -= 1;
+        return {
+          answers: Object.fromEntries(Object.keys(questions).map((k) => [k, { type: 'noul' as const, noul: 0.9 }])),
+        };
+      },
+    };
+    const out = await compact(long(400), asker, options);
+    expect(requests).toBeGreaterThan(4);
+    expect(out.stats.requests).toBe(requests);
+    expect(peak).toBe(4);
+  });
+
+  it('starts no further request once one has failed', async () => {
+    let started = 0;
+    const asker: JevAsker = {
+      async ask() {
+        started += 1;
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        throw new Error('Jev request failed (503): busy');
+      },
+    };
+    await expect(compact(long(400), asker, options)).rejects.toThrow(/503/);
+    expect(started).toBe(4);
+  });
+});
+
+describe('repeated compaction', () => {
+  it('settles results an earlier round reduced and asks only about the rest', async () => {
+    const messages = transcript();
+    messages.splice(-2, 0, call('tool-4', 'Read', { file_path: 'src/c.ts' }, fileB), result('tool-4', fileB));
+    const first = await compact(messages, fakeJev((name) => (name.endsWith('_t2') ? 0.9 : 0.1)), {
+      preserveRecentMessages: 1,
+    });
+    expect(first.decisions.map((d) => d.action)).toEqual(['stub_call', 'keep', 'stub_call', 'stub_call']);
+
+    const calls = collectToolCalls(first.messages, 1);
+    expect(calls.map((c) => c.settled)).toEqual([true, false, false, true]);
+
+    const seen: Seen[] = [];
+    const second = await compact(first.messages, fakeJev(() => 0.1, seen), { preserveRecentMessages: 1 });
+    expect(seen.flatMap((s) => s.questions).sort()).toEqual(['call_t2', 'call_t3', 'result_t2', 'result_t3']);
+    expect(second.stats.settled).toBe(2);
+    expect(second.decisions.filter((d) => d.reason === 'settled').map((d) => d.id)).toEqual(['t1', 't4']);
+  });
+
+  it('recognises every note this library writes, and nothing else', () => {
+    const note = (text: string, isError = false): boolean => {
+      const messages = [message('user', 'go'), call('x', 'Bash', {}, text), result('x', text, isError), message('user', 'next')];
+      const calls = collectToolCalls(messages, 0);
+      const stubbed = applyDecisions(messages, [decideCall(calls[0]!, { keepCall: 0.1, keepResult: 0.1 }, { keepThreshold: 0.5 })], calls, 300);
+      const truncated = applyDecisions(messages, [decideCall(calls[0]!, { keepCall: 0.9, keepResult: 0.1 }, { keepThreshold: 0.5 })], calls, 300);
+      return [stubbed, truncated].every((out) => collectToolCalls(out, 0)[0]!.settled);
+    };
+    expect(note('y'.repeat(2000))).toBe(true);
+    expect(note(`Error: boom\n${'z'.repeat(2000)}`, true)).toBe(true);
+    const plain = [message('user', 'go'), call('x', 'Bash', {}, 'ok'), result('x', 'ok; re-run the tool if needed]'), message('user', 'n')];
+    expect(collectToolCalls(plain, 0)[0]!.settled).toBe(false);
   });
 });

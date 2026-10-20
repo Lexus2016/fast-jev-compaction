@@ -38,7 +38,7 @@
       "type": "number",
       "title": "Jev compaction timeout",
       "description": "Maximum milliseconds to wait for a Jev round, including all request batches. A timed-out plugin request leaves history unchanged; manual and automatic compactions fall back to the built-in summary.",
-      "default": 15000
+      "default": 60000
     },
     "dropCalls": {
       "type": "boolean",

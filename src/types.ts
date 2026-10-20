@@ -45,6 +45,8 @@ export interface ToolCall {
   isError: boolean;
   /** In the first or the newest preserved messages; never a candidate. */
   pinned: boolean;
+  /** Its result is already a compaction note or cut head; never a candidate again. */
+  settled: boolean;
 }
 
 export interface CallAnswer {
@@ -65,7 +67,7 @@ export interface CallDecision extends CallAnswer {
   id: string;
   tool: string;
   action: CallAction;
-  reason: 'pinned' | 'kept' | 'result_dropped' | 'call_stubbed' | 'call_dropped';
+  reason: 'pinned' | 'settled' | 'kept' | 'result_dropped' | 'call_stubbed' | 'call_dropped';
 }
 
 export interface HistoryToolCall {
@@ -145,6 +147,8 @@ export interface CompactResult {
     callsDropped: number;
     callsStubbed: number;
     pinned: number;
+    /** Calls an earlier compaction already reduced, not asked about again. */
+    settled: number;
     stateTokens: number;
     /** Which fitting stage the state needed, '' when no request was made. */
     stateStage: string;
