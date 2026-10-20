@@ -191,3 +191,106 @@ describe('password literals found in the second review', () => {
     expect(redactSecrets(JSON.stringify({ command: 'export DB_PASSWORD="$DB_PASS"' })).count).toBe(0);
   });
 });
+
+// Shapes from llm-security-proxy's catalogue (src/security/patterns.rs), assembled at run time.
+const SERVICE_TOKENS = {
+  awsTemporary: j('AS', 'IA', 'ABCDEFGHIJKLMNOP'),
+  sendgrid: j('SG', '.', 'AbCdEfGh1234IjKlMnOp56', '.', 'QrStUvWx7890YzAbCdEf1234GhIjKlMnOp5678QrS'),
+  vault: j('hv', 's.', 'CAESIAbCdEfGh1234IjKlMnOp5678'),
+  doppler: j('dp', '.pt.', 'AbCd1234EfGh5678IjKl90'),
+  telegram: j('123456789', ':A', 'AbCd1234EfGh5678IjKl90MnOp1234QrSt5'),
+  npm: j('np', 'm_', 'AbCd1234EfGh5678IjKl90MnOp1234QrSt'),
+  pypi: j('pypi-', 'AgEIcHlwaS5vcmc', 'AbCd1234'.repeat(7)),
+  mailgun: j('ke', 'y-', '0123456789abcdef0123456789ABCDEF'),
+  newRelic: j('NR', 'AK-', 'ABCDEFGHIJ0123456789KLMNOPQ'),
+  digitalOcean: j('do', 'p_v1_', 'a1b2c3d4'.repeat(8)),
+  gitlab: j('gl', 'pat-', 'AbCd1234EfGh5678IjKl'),
+  stripeWebhook: j('wh', 'sec_', 'AbCd1234EfGh5678IjKl90'),
+  huggingFace: j('h', 'f_', 'AbCdEfGhIjKlMnOpQrSt12'),
+  grafana: j('gl', 'sa_', 'AbCd1234'.repeat(4), '_a1b2c3d4'),
+  shopify: j('shp', 'at_', 'a1b2c3d4'.repeat(4)),
+  linear: j('lin', '_api_', 'AbCd1234'.repeat(3)),
+  postman: j('PM', 'AK-', '0123456789abcdef01234567-', 'AbCd1234'.repeat(4)),
+  flyDeploy: j('Fly', 'V1 fm2_', 'AbCd1234'.repeat(4)),
+  flyAccess: j('fo', '1_', 'AbCd1234'.repeat(3)),
+  groq: j('gs', 'k_', 'AbCd1234'.repeat(4)),
+  replicate: j('r', '8_', 'AbCd1234'.repeat(4)),
+  databricks: j('da', 'pi', '0123456789abcdef'.repeat(2)),
+};
+
+describe('redaction gaps found in the 0.4.1 audit', () => {
+  it.each(Object.entries(SERVICE_TOKENS))('removes a %s token in prose and in a serialised tool input', (_name, token) => {
+    for (const text of [`use ${token} here`, JSON.stringify({ command: `deploy ${token}` })]) {
+      const out = redactSecrets(text);
+      expect(out.text).not.toContain(token);
+      expect(out.count).toBeGreaterThan(0);
+    }
+  });
+
+  const hex40 = '9c2e'.repeat(10);
+  it.each([
+    ['a PASS-named variable', `SMTP_PASS=${j('abc', '12345')}`, /abc12345/],
+    ['a PASS-named JSON field', `{"DB_PASS": "${j('hunter', '22')}"}`, /hunter22/],
+    ['a quoted pass key in a login body', JSON.stringify({ command: `curl -d '{"user":"admin","pass":"${j('hun', 'ter22')}"}' https://x` }), /hunter22/],
+    ['a passphrase', `passphrase: ${j('correct', 'horse')}`, /correcthorse/],
+    ['a Ukrainian password key', `пароль: ${j('qwe', 'rty123')}`, /qwerty123/],
+    ['a token with a comma inside', `token=${j('abc,', 'def12345')}`, /def12345/],
+    ['a hex credential after --key', `deploy --key ${hex40}`, /9c2e9c2e/],
+    ['a password flag', `unzip --pass ${j('s3cr', 'et99')} a.zip`, /s3cret99/],
+    ['a cookie header in a curl command', JSON.stringify({ command: `curl -H "Cookie: session=${j('4f9a', '2b7c1d8e')}" https://x` }), /4f9a2b7c/],
+    ['a cookie JSON field', `{"Cookie": "sid=${j('4f9a', '2b7c1d8e')}; theme=dark"}`, /4f9a2b7c|theme/],
+    ['a short URL password', `postgres://app:${j('pw', '1')}@db:5432/x`, /pw1/],
+    ['an email address', `contact ${j('john.doe', '@acme.com')} today`, /john\.doe/],
+    ['an international phone number', `call ${j('+1 415 ', '555 0101')} now`, /555 0101/],
+    ['a card number that passes Luhn', `card ${j('4111 1111 ', '1111 1111')}`, /1111 1111$/],
+    ['an IBAN that passes mod-97', `pay to ${j('GB82WEST', '12345698765432')}`, /GB82WEST/],
+  ])('redacts %s', (_name, text, leak) => {
+    const out = redactSecrets(text);
+    expect(out.count).toBeGreaterThan(0);
+    expect(out.text).not.toMatch(leak);
+  });
+
+  it.each([
+    'bypass=true',
+    'compass=north123',
+    'If tests pass: ship it',
+    'const create = (cookie: string, payload: object) => post(payload)',
+    'fetch(url, { headers: { cookie }, method })',
+    'ssh --key ~/.ssh/id_ed25519 host',
+    'openssl --key /etc/ssl/private/server.pem',
+    'git push git@github.com:Lexus2016/fast-jev-compaction.git main',
+    'const cfg = { token: process.env.TOKEN, retries: 3 }',
+    'card 4111 1111 1111 1112',
+    'IBAN GB82WEST12345698765433',
+    'x+12345678 is a sum',
+    'version 1.2.3+build.45',
+  ])('leaves non-secrets alone: %s', (text) => {
+    const out = redactSecrets(text);
+    expect(out.text).toBe(text);
+    expect(out.count).toBe(0);
+  });
+
+  it('keeps trailing commas outside the redaction', () => {
+    expect(redactSecrets(`token=${j('abc,', 'def12345')},`).text).toBe(`token=${REDACTED},`);
+  });
+
+  it('removes the rest of a private key whose END line was cut off', () => {
+    const body = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7aB3dE6gH9jK2mN5pQ8sT1vW4';
+    const cut = JSON.stringify({ content: `-----BEGIN ${'PRIVATE'} KEY-----\n${body}\n${body}` }).slice(0, -2);
+    const out = redactSecrets(cut);
+    expect(out.text).not.toContain(body.slice(0, 20));
+  });
+
+  it('scans BEGIN markers without an END in linear time', () => {
+    const time = (size: number): number => {
+      const text = `-----BEGIN ${'PRIVATE'} KEY-----\n`.repeat(Math.floor(size / 28));
+      const started = performance.now();
+      redactSecrets(text);
+      return performance.now() - started;
+    };
+    time(50_000); // warm up
+    const small = Math.max(time(200_000), 1);
+    const large = time(800_000);
+    expect(large / small).toBeLessThan(10); // quadratic would be ~16x
+  });
+});
