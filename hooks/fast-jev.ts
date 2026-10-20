@@ -413,6 +413,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
 
     try {
       const config = { ...configured, apiKey: await getApiKey($, configured) };
+      // The transcript gets the reduction only; logDecisions adds the counts.
+      const detail = (outcome: CompactResult) =>
+        config.logDecisions ? summarize(outcome) : `${percent(reductionRatio(outcome))} reduction`;
       let redacted = 0;
       const { result, messages } = await withCompactionDeadline(
         (signal) => compactSession(
@@ -431,8 +434,10 @@ export const register: Register = (on: On, options: PluginOptions) => {
         (ms, options) => $.clock.sleep(ms, options),
         next.signal,
       );
-      if (redacted > 0) $.ui.log(`redacted ${redacted} secret-shaped value(s) from the Jev request`);
-      if (config.logDecisions) for (const line of decisionLogLines(result)) $.ui.log(line);
+      if (config.logDecisions) {
+        if (redacted > 0) $.ui.log(`redacted ${redacted} secret-shaped value(s) from the Jev request`);
+        for (const line of decisionLogLines(result)) $.ui.log(line);
+      }
       if (reductionRatio(result) < config.minReductionRatio) {
         // The engine's own compaction must shrink the conversation. Before an LLM
         // summary, remove the calls Jev already rated unneeded instead of keeping
@@ -443,16 +448,16 @@ export const register: Register = (on: On, options: PluginOptions) => {
             const kept = toSessionMessages(event.messages, dropped.messages);
             notify(
               $,
-              `kept ${kept.length}/${event.messages.length} messages, no summary; stubs alone freed ${percent(reductionRatio(result))}, so ${result.stats.callsStubbed} unneeded calls were removed (${summarize(dropped)})`,
+              `kept ${kept.length}/${event.messages.length} messages, no summary; stubs alone freed ${percent(reductionRatio(result))}, so ${result.stats.callsStubbed} unneeded calls were removed (${detail(dropped)})`,
             );
             return { messages: kept };
           }
         }
-        return giveUp(`below ${percent(config.minReductionRatio)} minimum: ${summarize(result)}`);
+        return giveUp(`below ${percent(config.minReductionRatio)} minimum: ${detail(result)}`);
       }
       notify(
         $,
-        `kept ${messages.length}/${event.messages.length} messages, no summary (${summarize(result)})`,
+        `kept ${messages.length}/${event.messages.length} messages, no summary (${detail(result)})`,
       );
       return { messages };
     } catch (error) {

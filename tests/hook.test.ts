@@ -433,8 +433,14 @@ describe('built-in summary fallback', () => {
       const { out, delegated, notices } = await compactWith(trigger, jevFetch(() => 0.1));
       expect(delegated).toBe(false);
       expect(out).toMatchObject({ messages: expect.any(Array) });
-      expect(notices.at(-1)).toMatch(/^kept 7\/7 messages, no summary \(\d+% reduction; 2 calls stubbed/);
+      expect(notices).toEqual([expect.stringMatching(/^kept 7\/7 messages, no summary \(\d+% reduction\)$/)]);
     }
+  });
+
+  it('adds the counts and the per-call decisions only with logDecisions', async () => {
+    const { notices } = await compactWith('manual', jevFetch(() => 0.1), { logDecisions: true });
+    expect(notices[0]).toMatch(/^decisions: /);
+    expect(notices.at(-1)).toMatch(/^kept 7\/7 messages, no summary \(\d+% reduction; 2 calls stubbed; state ~\d+ tokens/);
   });
 
   it('leaves a /compact or a plugin request that Jev cannot shrink as it is', async () => {
@@ -442,7 +448,7 @@ describe('built-in summary fallback', () => {
       const { out, delegated, notices } = await compactWith(trigger, jevFetch(() => 0.9));
       expect(delegated).toBe(false);
       expect(out).toEqual({
-        skip: expect.stringMatching(/^fast-jev-compaction: below 25% minimum: 0% reduction; .*; conversation left unchanged$/),
+        skip: 'fast-jev-compaction: below 25% minimum: 0% reduction; conversation left unchanged',
       });
       expect(notices.at(-1)).toMatch(/^not compacted, no built-in summary \(below 25% minimum/);
     }

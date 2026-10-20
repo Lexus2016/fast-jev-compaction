@@ -88,8 +88,9 @@ logs a fallback and delegates to Claude Code's built-in compaction; `/compact` (
 (`plugin`, including this plugin's `turn.complete` one) answer `{ skip }`
 instead, so the conversation stays as it is and Claude Code shows why.
 `always` delegates on every trigger, as upstream did; `never` on none. The
-outcome is shown as a toast and logged with the reduction, per-reason counts,
-state size and request count. Setting `logDecisions` also logs a per-call
+outcome is shown as a toast and logged as one line with the reduction only.
+Setting `logDecisions` adds the per-reason counts, state size and request
+count to that line, the number of redacted values, and a per-call
 `decisions:` line with both probabilities for diagnosis. The `turn.complete`
 hook requests compaction when `context.percent` reaches `compactAtPercent`, for
 a main-agent answer only, with an in-flight guard. When that request is

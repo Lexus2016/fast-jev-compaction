@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 — 2026-10-20
+
+- A compaction logs one line with the reduction only. The per-reason counts,
+  state size, request count and redaction count moved behind `logDecisions`,
+  next to the per-call `decisions:` lines.
+
 ## 0.4.0 — 2026-10-20
 
 First release of the maintained fork, on upstream `e3f262a` (0.3.0). Every
