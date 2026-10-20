@@ -24,7 +24,8 @@ and everything kept stays verbatim. Also usable as an npm library.
   with the evidence gone (after which a model has reported work it never did).
 - **No needless LLM summary** (#103). Only Claude Code's own automatic
   compaction, which must shrink the conversation, falls back to the built-in
-  summary; `/compact` and the plugin's own request are skipped instead.
+  summary, and only after removing the calls Jev rated unneeded did not free
+  enough either; `/compact` and the plugin's own request are skipped instead.
 - **Long sessions compact.** A history too large for one Jev state is asked
   in windows instead of throwing (500+ calls used to always fall back).
   Repeated compactions do not re-ask about outputs already reduced.
@@ -95,8 +96,12 @@ built-in compaction summary with the original messages.
    - else `keepCall ≥ threshold` → keep the call, truncate the result to its
      first `truncateHeadChars` characters plus a one-line note;
    - else → keep the call whole and replace its result with a one-line note
-     (`stub_call`; an error keeps its head). With `dropCalls: true` the call is
-     removed together with its result instead.
+     (`stub_call`); an error keeps its head, and an output no longer than
+     `truncateHeadChars` + 120 stays as it is. With `dropCalls: true` the call
+     is removed together with its result instead.
+
+   Every note says the output was read in full when the call ran, so a model
+   does not take its own earlier answers for guesses.
 7. The message list is rebuilt. Only tool-result messages are rewritten: a
    message holding a call is returned as the same object (or, with
    `dropCalls`, loses that call), because Claude Code treats a rebuilt call
@@ -174,7 +179,10 @@ stage was needed, and the number of requests.
   are only abridged in the state Jev sees). A stub keeps its call's full input,
   so calls with large inputs (`Write`, long `Bash` scripts) cost what they
   cost: shortening them was tried, and a model read the cut input as what it
-  had run.
+  had run. On the 26 heaviest local transcripts, stubbing every unpinned call
+  frees 21–69% (erasing them, 34–97%). The Claude Code hook therefore erases
+  the calls Jev rated unneeded, with no new request, when Claude Code's own
+  automatic compaction cannot otherwise reach `minReductionRatio`.
 - Token sizes are estimates from character counts, not a tokenizer.
 - Calibration is at the request level; a probability is not a proof that a
   result is safe to delete. The assistant can always re-run the tool.

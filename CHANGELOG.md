@@ -20,6 +20,11 @@ Context
 - A history too large for one Jev state is asked in windows instead of falling
   back (upstream #119). Outputs an earlier compaction reduced are not asked
   about again.
+- When Claude Code's own automatic compaction cannot reach the minimum with
+  stubs, the calls Jev rated unneeded are removed (no new request) before the
+  built-in summary is used.
+- A stub keeps an output no longer than `truncateHeadChars` + 120 verbatim,
+  and every note says the output was read in full when the call ran.
 
 Requests
 

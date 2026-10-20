@@ -65,6 +65,8 @@ $.settings.read, $.ui.log, $.ui.toast`; env writes: nothing; env reads:
 | `ed0a882` | lone surrogates replaced in the request's strings by a `JSON.stringify` replacer | the #132 regex rewrote a tool's literal `\ud800` text; new test fails on the old code |
 | `8bf741a` | settled results (already reduced) not asked again; at most four requests in flight, none started after a failure; `compactionTimeoutMs` 15 s → 60 s | 2000 synthetic calls: ~50 requests; the built-in summary it would fall back to takes ~30 s |
 | `19a6980` | `.catch` on `session.compact` with the fallback policy | `claude plugin validate`: "gating hook without .catch" before, "with .catch" after |
+| `7ec154b` | an auto compaction whose stubs free too little removes the calls Jev rated unneeded before falling back; a stub keeps an output up to `truncateHeadChars` + 120 verbatim | 26 heaviest local transcripts, fake Jev rating every call unneeded: stubs 21–69%, erasing 34–97%, truncating results only 18–64% |
+| `e408836` | every note says the output was read in full when the call ran | real-Jev smoke: Haiku called its own earlier answers unverified with the old wording |
 
 ## Considered and not ported
 
@@ -121,6 +123,15 @@ second `/compact`, then questions answered from memory only.
 The second `/compact` (21% < 25%) now answers `not compacted, no built-in
 summary` and the next answer still quotes the verbatim history; before
 `6a44223` it fell back to the LLM summary.
+
+Then the shipped plugin, unmodified (real Jev decisions, the 25% gate, six
+pinned messages), with the same scenario: Jev stubbed all five calls (90–92%
+reduction), no pairing repair, and the second `/compact` was skipped with
+`5 settled; no Jev request`. Every model recalled the Bash command exactly and
+reported the removed outputs as removed. `claude-haiku-5-5` still called its
+own earlier answers unverified, even with the read-in-full wording;
+`claude-sonnet-5-5` kept them as what it had seen and marked only inferences
+as inferences.
 
 ## Performance
 

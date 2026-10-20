@@ -81,8 +81,10 @@ fork compactions (`agentId`) go to the next handler untouched, and a
 unavailable, or the estimated reduction is below `minReductionRatio`, what
 happens next depends on the compaction's `trigger`. With `builtinFallback` at
 `auto`, only Claude Code's own compaction (`auto`: its threshold, or a prompt
-too long, when the conversation has to shrink) logs a fallback and delegates to
-Claude Code's built-in compaction; `/compact` (`manual`) and a plugin's request
+too long, when the conversation has to shrink) goes further: if its stubs alone
+free too little, the same answers are applied with the stubbed calls removed
+(no new Jev request) and installed if that clears the minimum; otherwise it
+logs a fallback and delegates to Claude Code's built-in compaction; `/compact` (`manual`) and a plugin's request
 (`plugin`, including this plugin's `turn.complete` one) answer `{ skip }`
 instead, so the conversation stays as it is and Claude Code shows why.
 `always` delegates on every trigger, as upstream did; `never` on none. The
