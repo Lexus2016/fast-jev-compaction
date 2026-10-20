@@ -27,7 +27,9 @@ into as many requests as needed so each request (state plus questions) stays
 under `maxRequestTokens` and holds at most 128 questions; the state is resent
 with every request, at most four run at once. An output an earlier compaction
 already reduced is not asked about again. Secret-shaped values are redacted
-from everything sent to Jev; the transcript itself keeps them. Token counts are
+from everything sent to Jev, and so are the `settings.env` values whose name
+says KEY, TOKEN, SECRET, PASS, AUTH or CRED or which look like a token; the
+transcript itself keeps them. Token counts are
 estimated without a tokenizer, calibrated to land a little above what Jev
 reports.
 

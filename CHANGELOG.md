@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.5.0 — 2026-10-20
+
+Fixes from the audit of 0.4.1; details and evidence in
+[FORK.md](FORK.md#audit-of-041).
+
+Security
+
+- Redaction catches `PASS`-named and quoted `"pass"` keys, `passphrase`,
+  `пароль`, values with a comma inside, `--key`/`--pass` flags, `Cookie`
+  headers, short URL passwords, e-mail addresses, `+` phone numbers, valid
+  card numbers and IBANs, and 22 more service token shapes (SendGrid, Vault,
+  Doppler, GitLab, Hugging Face, npm, PyPI, …). A private key cut before its
+  END line is redacted to the end, in linear time.
+- Secret-named or token-shaped `settings.env` values are redacted wherever
+  they appear in a Jev request.
+- The library (`compactMessages`, `JevClient`) redacts like the hook and
+  aborts a request after `timeoutMs` (60 s).
+- Notes tell the model to re-run only reads, never to repeat a call that
+  wrote, sent or deleted something just to see its output.
+- A Jev probability outside [0, 1] fails the round instead of deciding a
+  call; `keepThreshold`, `minReductionRatio` and `compactAtPercent` are
+  bounded.
+- README no longer points to the `fast-jev-compaction` npm package, which is
+  not built from this repository.
+
+Other
+
+- A truncation or stub is applied only when it frees at least 100 chars; some
+  outputs used to grow.
+- vitest 5 (`npm audit`: 0), CI on every push, no type assertions in `src/`
+  or `hooks/`.
+
 ## 0.4.1 — 2026-10-20
 
 - A compaction logs one line with the reduction only. The per-reason counts,

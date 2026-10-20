@@ -342,8 +342,9 @@ const MAX_CONCURRENT_REQUESTS = 4;
 /**
  * Maps `items` through `fn` with at most `limit` calls in flight, keeping the
  * order. On the first failure, or once `signal` aborts, no further item is
- * started; the failure (or the cancellation) is thrown once the calls in
- * flight have settled.
+ * started. A failure is thrown at once: calls still in flight finish in the
+ * background and their results are dropped. A cancellation is thrown once
+ * the calls in flight have settled.
  */
 async function mapLimit<T, R>(
   items: readonly T[],

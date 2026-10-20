@@ -70,6 +70,14 @@ $.settings.read, $.ui.log, $.ui.toast`; env writes: nothing; env reads:
 | `1eec67d` | redaction: escaped quotes in serialised inputs, short and dotted passwords, any-case `bearer`, Stripe `sk_` keys, no double redaction | independent review (codex) reproduced a password in a Bash command reaching Jev; five new tests and an end-to-end body check fail on the previous code |
 | `4e05b45` | the deadline (or the end of the hook's dispatch) stops the request queue; a call Jev was not asked about is kept whatever the threshold | same review; three new tests fail on the previous code |
 | `4866025` | quoted and very short passwords redacted whole; the work stops however the deadline's wait ends | second review of the fixes; nine new tests fail on the previous code |
+| `b0e20fe` | redaction: `PASS`-named and quoted `"pass"` keys, `passphrase`, `пароль`, commas inside values, `--key`/`--pass`, `Cookie` headers, 3+ char URL passwords, e-mail, `+` phone numbers, Luhn-valid cards, mod-97-valid IBANs, 22 service token shapes from llm-security-proxy (`src/security/patterns.rs`); the PEM rule runs to the end of a cut text | 0.4.1 audit probes (`SMTP_PASS=…`, `"DB_PASS"`, cookies, `token=a,b…`, `--key <hex>`) all passed unredacted before; PEM without END took 0.48/1.9/7.6 s on 200/400/800 KB, now ~45 ms on 800 KB; offline on states from 12 local transcripts: 778 redactions instead of 700, 0.05% of the state text |
+| `2ef21ae` | one redacting asker (`src/asker.ts`) for the hook and `JevClient`, so `compactMessages` redacts too; `JevClient` aborts a request after `timeoutMs` (60 s) | the library path sent the history unredacted and could wait forever (audit, council) |
+| `ad76e4d` | secret-named or token-shaped `settings.env` values redacted as known secrets; unreadable settings no longer cost the compaction | `curl -u bot:<value>` passes every pattern; the host tests caught a `settings.read` rejection that would have failed the round |
+| `6ea7f20` | notes say to re-run only reads and not to repeat a call that wrote, sent or deleted something; a rewrite must free at least 100 chars measured against the note actually written | 421–428-char outputs grew when truncated; live A/B below |
+| `ed4bbe1` | Jev answers validated through type guards; a `noul` outside [0, 1] (beyond 1e-6) fails the round; `keepThreshold`, `minReductionRatio` and `compactAtPercent` bounded | `noul: -1` was accepted and stubbed calls (council) |
+| `b4a23f9` | no type assertion left in `src/` or `hooks/`; redaction moved into the request's `JSON.stringify` replacer | same timing on 500–5000 synthetic calls |
+| `6a18116` | vitest 2.1.8 → 5.0.5 | `npm audit`: 7 advisories (2 critical) → 0 |
+| `1634223` | CI: typecheck, tests, `npm audit --audit-level=high`, actions pinned to SHAs | — |
 
 ## Considered and not ported
 
@@ -136,6 +144,17 @@ own earlier answers unverified, even with the read-in-full wording;
 `claude-sonnet-5-5` kept them as what it had seen and marked only inferences
 as inferences.
 
+For 0.5.0 the note wording was checked the same way, with 0.4.1 (old
+wording) and 0.5.0 side by side: a `Read` of a file and a `Bash` command that
+appends to `deploy.log` and prints 120 lines were both stubbed, then the
+model was asked for a fact from the file and for line 57 of the command's
+output. Both builds re-read the file and answered from it; neither repeated
+the command (`deploy.log` holds one line in both) and both reconstructed the
+line from the command itself, saying the output had been removed. So the
+re-run hazard did not reproduce with the old wording on Haiku; the new
+wording closes the instruction that invited it and changed nothing else.
+Both compactions applied (83%, 86%), with no pairing repair.
+
 ## Performance
 
 Synthetic sessions, fake Jev, `node --expose-gc`, local work only (the Jev
@@ -166,16 +185,53 @@ found edge cases (quoted passwords with spaces, one-to-three-char passwords,
 a token inside a password, single-quoted `$` literals, a sleep that rejects
 or throws); all are fixed and tested.
 
+## Audit of 0.4.1
+
+On 2026-10-20 0.4.1 was audited against the AI-SAFE threat list (INPUT,
+EXEC, LOGIC, INFRA, DATA) and, independently, by `consult council` (agy and
+grok, synthesised by codex; 8 of 8 citations verified). Verdict for 0.4.1:
+not safe, for the redaction leaks and the library path above. Fixed in 0.5.0
+as listed under "Written here". Council findings not taken:
+
+- *Dropping stubbed calls splits a parallel response (#137 again)*: in
+  39,826 assistant rows of 40 local transcripts no row holds more than one
+  `tool_use`, or a `tool_use` with text, so a dropped call removes its whole
+  row and nothing is rebuilt.
+- *A tool output can forge the settled note* (rated high): it can, and such an
+  output is then never compacted; without the plugin it would stay in context
+  until the built-in summary all the same, so it gains an attacker nothing.
+  Listed below.
+- *Jev decides without seeing the outputs*: by design; sending them would
+  multiply the state and what redaction has to catch.
+
+Re-run of every probe on 0.5.0: everything above is redacted; the residual
+misses are listed below. With the last 🔴/🟠 items closed, the remaining open
+item is INFRA.2 (no cap on requests per compaction, 🟡).
+
 ## Known gaps
 
 - Redaction is pattern-based, as upstream's was: a secret with no recognisable
-  name, prefix or shape still reaches Jev. Known misses: a quoted password
-  holding an escaped quote of its own (`--password="ab\"cd"` keeps `cd`); a
-  password-named JSON value that is not a string (`{"password":1234}`) is
-  replaced unquoted, which only affects the text Jev reads.
+  name, prefix or shape still reaches Jev. Known misses: a password in prose
+  ("the password is …"), a hex credential in a URL path (40- and 64-char hex
+  is exempt as a commit or sha256 digest), a local phone number written
+  without `+`, a quoted password holding an escaped quote of its own
+  (`--password="ab\"cd"` keeps `cd`). Over-redaction seen offline: a short
+  value after a `fix-pass:`-style label.
+- No cap on Jev requests per compaction: a 5000-call synthetic session takes
+  138 requests (~2.3M tokens by chars/4), 72–78% of each the same state sent
+  again. Shorter questions would fit 64 calls per request instead of ~34;
+  left until its effect on Jev's answers is measured.
+- A failed Jev batch fails the round and drops the answers already paid for;
+  there is no retry on 429/5xx yet.
+- The six pinned messages are about three calls, not the current turn: an
+  automatic compaction in the middle of a long turn can stub an output the
+  model is still working with (it can re-read it).
+- An output is "settled" by its note text, so a tool output ending in that
+  text is never compacted.
+- Claude Code installs the dev dependencies into the plugin cache (36
+  packages, `npm audit` 0); the hook imports none of them.
 - The Jev state still tells Jev that what is not kept "is deleted
   permanently"; with stubs, only outputs are. Left as is until its effect on
   Jev's calibration is measured.
-- A failed Jev batch fails the round; there is no retry on 429/5xx yet.
-- Some upstream code and tests use TypeScript type assertions (`as`); new code
-  here avoids them.
+- Tests (several from upstream) still use TypeScript type assertions; `src/`
+  and `hooks/` have none.

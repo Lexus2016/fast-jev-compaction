@@ -114,8 +114,13 @@ Claude Code hook) decides what to fall back to.
 
 ## Install and usage
 
+This fork is not published to npm. The `fast-jev-compaction` package on npm
+is not built from this repository; build the library from source instead:
+
 ```sh
-npm install fast-jev-compaction
+git clone https://github.com/Lexus2016/fast-jev-compaction.git
+cd fast-jev-compaction
+npm ci && npm run build      # the library is in dist/
 export TYPESAFE_API_KEY=...
 ```
 
@@ -160,6 +165,9 @@ put it in a source file.
 | `model` | `jev-latest` | Jev model name |
 | `baseUrl` | `https://api.typesafe.ai/v1/systemone` | System One endpoint |
 | `fetch` | native `fetch` | Injectable fetch implementation for tests |
+| `timeoutMs` | `60000` | Abort a Jev request (body included) after this long |
+| `known` | none | Values redacted wherever they appear, besides the API key |
+| `onRedact` | none | Gets the number of secret-shaped values redacted from each request |
 | `goal` | last 3 user prompts | Ongoing task description included in the state |
 | `keepThreshold` | `0.5` | Minimum keep probability for a call or result to stay |
 | `preserveRecentMessages` | `6` | Newest messages never touched (the first is always kept) |
@@ -185,7 +193,12 @@ stage was needed, and the number of requests.
   automatic compaction cannot otherwise reach `minReductionRatio`.
 - Token sizes are estimates from character counts, not a tokenizer.
 - Calibration is at the request level; a probability is not a proof that a
-  result is safe to delete. The assistant can always re-run the tool.
+  result is safe to delete. The assistant can re-run a read; every note tells
+  it not to repeat a call that wrote, sent or deleted something just to see
+  its output.
+- Redaction is pattern-based: a secret with no recognisable name, prefix or
+  shape still reaches Jev (a password in prose, a hex credential in a URL
+  path, a local phone number). See [FORK.md](FORK.md#known-gaps).
 - The state is repeated with every request, so a history near the state
   ceiling costs one request per ~40 calls; a 2000-call session takes about
   50 requests (four in flight).
