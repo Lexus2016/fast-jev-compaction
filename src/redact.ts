@@ -10,10 +10,16 @@
 
 export const REDACTED = '[REDACTED]';
 
+/**
+ * What a rule's value capture sees of an earlier replacement: the value
+ * classes stop before `]`, so a guard against redacting twice looks for this.
+ */
+const REDACTED_HEAD = REDACTED.slice(0, -1);
+
 /** Credentials with a recognisable shape, replaced whole. */
 const TOKEN_PATTERNS: readonly RegExp[] = [
   /\bsk-(?:ant|or|kimi|proj|live|test)?-?[A-Za-z0-9_-]{16,}/g, // Anthropic, OpenRouter, Kimi, OpenAI, Stripe
-  /\b(?:rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}/g, // Stripe
+  /\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}/g, // Stripe
   /\bpit-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, // GoHighLevel private integration
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b/g, // GitHub
   /\bgithub_pat_[A-Za-z0-9_]{30,}\b/g,
@@ -33,7 +39,15 @@ const PREFIXED = /\b([A-Za-z]{2,10})_([A-Za-z0-9_.-]{40,})/g;
 /** `NAME=value`, `"apiKey": "value"`, `--token value`: keep the name, drop the value. */
 const ASSIGNMENT =
   // repetition is bounded ({0,4}, {1,30}): an unbounded (?:[A-Za-z0-9]+[_-])* backtracks quadratically on snake_case runs
-  /((?:[A-Za-z0-9]{1,30}[_-]){0,4}(?:api[_-]?key|apikey|key|token|secret|password|passwd|pwd|auth|credentials?|client[_-]?secret|access[_-]?key)(?:[_-][A-Za-z0-9]{1,30}){0,4}["']?[ \t]{0,4}[:=][ \t]{0,4}["']?)([^\s"'`,;)\]}\\<>]{8,})/gi;
+  /((?:[A-Za-z0-9]{1,30}[_-]){0,4}(?:api[_-]?key|apikey|key|token|secret|password|passwd|pwd|auth|credentials?|client[_-]?secret|access[_-]?key)(?:[_-][A-Za-z0-9]{1,30}){0,4}(?:\\?["'])?[ \t]{0,4}[:=][ \t]{0,4}(?:\\?["'])?)([^\s"'`,;)\]}\\<>]{8,})/gi;
+
+/**
+ * A password, however short or dotted: the generic rule above needs 8+ chars
+ * and spares member access (`a.b`), which lets `password=hunter2` through.
+ * Quotes may come escaped (`\"`), as they do inside a serialised tool input.
+ */
+const PASSWORD =
+  /((?:[A-Za-z0-9]{1,30}[_-]){0,4}(?:password|passwd|pwd)(?:[_-][A-Za-z0-9]{1,30}){0,4}(?:\\?["'])?[ \t]{0,4}[:=][ \t]{0,4}(?:\\?["'])?)([^\s"'`,;)\]}\\<>]{4,})/gi;
 
 /** `scheme://user:password@host`: keep the user, drop the password. */
 const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]{1,15}:\/\/[^\s/@:]{1,64}:)([^\s@/]{6,})(@)/gi;
@@ -42,10 +56,10 @@ const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]{1,15}:\/\/[^\s/@:]{1,64}:)([^\s@/]{
 const BASE64 = /(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{32,}={0,2}(?![A-Za-z0-9+/=])/g;
 
 /** `--token value` style flags on command lines. */
-const FLAG = /(--(?:api-?key|token|password|secret|auth|client-secret)[=\s]+["']?)([^\s"'`]{8,})/gi;
+const FLAG = /(--(?:api-?key|token|password|secret|auth|client-secret)[=\s]+(?:\\?["'])?)([^\s"'`\\]{8,})/gi;
 
 /** `Bearer <token>` / `Basic <token>` in headers and curl lines. */
-const AUTH_SCHEME = /\b(Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{16,})/g;
+const AUTH_SCHEME = /\b(Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{16,})/gi;
 
 /** Long opaque strings: at least 32 chars, letters and digits mixed. */
 const OPAQUE = /(?<![A-Za-z0-9_\-/.\\])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_\-/.\\])/g;
@@ -102,7 +116,7 @@ export function redactSecrets(text: string, known: readonly string[] = []): Reda
     return REDACTED;
   });
   out = out.replace(URL_CREDENTIALS, (m, head: string, value: string, at: string) => {
-    if (value.includes(REDACTED)) return m;
+    if (value.includes(REDACTED_HEAD)) return m;
     count++;
     return `${head}${REDACTED}${at}`;
   });
@@ -122,13 +136,18 @@ export function redactSecrets(text: string, known: readonly string[] = []): Reda
     count++;
     return `${scheme} ${REDACTED}`;
   });
+  out = out.replace(PASSWORD, (m, name: string, value: string) => {
+    if (value.includes(REDACTED_HEAD) || /^(?:[$%]|(?:true|false|null|undefined|none)$)/i.test(value)) return m;
+    count++;
+    return `${name}${REDACTED}`;
+  });
   out = out.replace(ASSIGNMENT, (m, name: string, value: string) => {
-    if (value.includes(REDACTED) || looksLikeCode(value)) return m;
+    if (value.includes(REDACTED_HEAD) || looksLikeCode(value)) return m;
     count++;
     return `${name}${REDACTED}`;
   });
   out = out.replace(FLAG, (m, flag: string, value: string) => {
-    if (value.includes(REDACTED)) return m;
+    if (value.includes(REDACTED_HEAD)) return m;
     count++;
     return `${flag}${REDACTED}`;
   });

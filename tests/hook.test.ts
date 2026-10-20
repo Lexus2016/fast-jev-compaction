@@ -531,3 +531,21 @@ describe('auto compaction when stubs do not free enough', () => {
     expect(out).toEqual({ skip: expect.stringMatching(/^fast-jev-compaction: below 25% minimum/) });
   });
 });
+
+describe('what reaches Jev', () => {
+  it('carries no password a Bash call put in its command', async () => {
+    const password = ['hunter2', 'hunter2'].join('');
+    const messages = [
+      message('user', 'Connect to the database.', { handle: 'h-0' }),
+      call('db-1', 'Bash', { command: `export DB_PASSWORD="${password}" && psql -c 'select 1'` }, ' ?column? \n 1'),
+      result('db-1', ' ?column? \n 1'),
+      message('assistant', 'Connected.', { handle: 'h-3' }),
+      message('user', 'next', { handle: 'h-4' }),
+    ];
+    const bodies: string[] = [];
+    const config = { ...resolveHookConfig({ preserveRecentMessages: 1 }), apiKey: 'k'.repeat(16) };
+    await compactSession(messages, config, jevFetch(() => 0.9, bodies));
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const body of bodies) expect(body).not.toContain(password);
+  });
+});

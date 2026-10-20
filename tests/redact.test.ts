@@ -143,3 +143,27 @@ describe('jevAsker', () => {
     expect(counts).toEqual([1, 1]);
   });
 });
+
+describe('redaction bypasses found in review', () => {
+  const secret = j('hunter2', 'hunter2');
+  it.each([
+    ['an assignment inside a serialised tool input', JSON.stringify({ command: `export DB_PASSWORD="${secret}" && psql` })],
+    ['a flag value inside a serialised tool input', JSON.stringify({ command: `mysql --password "${secret}" db` })],
+    ['a short password', `password=${j('hun', 'ter2')}`],
+    ['a dotted password', `password=${j('short', '.secret')}`],
+    ['a lowercase bearer token', `authorization: bearer ${j('abcdefghij', 'klmnopqrstuvwxyz0123')}`],
+    ['a Stripe secret key', `STRIPE=${j('sk_', 'live_', 'aB3dE6gH9jK2mN5pQ8sT1vW4')}`],
+  ])('redacts %s, exactly once', (_name, text) => {
+    const out = redactSecrets(text);
+    expect(out.count).toBe(1);
+    expect(out.text).toContain(REDACTED);
+    expect(out.text).not.toContain(`${REDACTED}]`);
+    expect(out.text).not.toMatch(/hunter2|ter2|\.secret|klmnop|aB3dE6/);
+  });
+
+  it('leaves environment references and placeholders alone', () => {
+    for (const text of ['password=$DB_PASSWORD', 'password=%PASS%', 'password=none']) {
+      expect(redactSecrets(text).count).toBe(0);
+    }
+  });
+});
