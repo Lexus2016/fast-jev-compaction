@@ -67,6 +67,8 @@ $.settings.read, $.ui.log, $.ui.toast`; env writes: nothing; env reads:
 | `19a6980` | `.catch` on `session.compact` with the fallback policy | `claude plugin validate`: "gating hook without .catch" before, "with .catch" after |
 | `7ec154b` | an auto compaction whose stubs free too little removes the calls Jev rated unneeded before falling back; a stub keeps an output up to `truncateHeadChars` + 120 verbatim | 26 heaviest local transcripts, fake Jev rating every call unneeded: stubs 21–69%, erasing 34–97%, truncating results only 18–64% |
 | `e408836` | every note says the output was read in full when the call ran | real-Jev smoke: Haiku called its own earlier answers unverified with the old wording |
+| `1eec67d` | redaction: escaped quotes in serialised inputs, short and dotted passwords, any-case `bearer`, Stripe `sk_` keys, no double redaction | independent review (codex) reproduced a password in a Bash command reaching Jev; five new tests and an end-to-end body check fail on the previous code |
+| `4e05b45` | the deadline (or the end of the hook's dispatch) stops the request queue; a call Jev was not asked about is kept whatever the threshold | same review; three new tests fail on the previous code |
 
 ## Considered and not ported
 
@@ -145,6 +147,18 @@ requests themselves add ~0.4 s each):
 | 600–800 | throws: history too large → summary | 800: 103 ms, 2 windows, 14 requests |
 | 2000 | throws | 333 ms, 4 windows, 50 requests |
 | 4000 | throws | 876 ms, 8 windows, 102 requests |
+
+## Independent review
+
+Before the release, `codex` and `agy` (different providers) reviewed the diff
+against the task (`consult --panel codex,agy --review`). codex returned FAIL
+with five findings, four of them reproduced: a password in a serialised Bash
+command reached Jev; short, dotted and lowercase-bearer secrets passed; the
+deadline did not stop the request queue; an unasked call could be stubbed
+above a threshold of 1. All four are fixed in `1eec67d` and `4e05b45`. The
+fifth, that `builtinFallback: 'always'` lets `/compact` summarise, is the
+option working as documented. agy's run was cut off; its one finding (no
+explicit pattern for Stripe `sk_live_` keys) is in `1eec67d`.
 
 ## Known gaps
 

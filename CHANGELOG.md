@@ -28,9 +28,12 @@ Context
 
 Requests
 
-- Secret-shaped values are redacted from everything sent to Jev (upstream #98).
+- Secret-shaped values are redacted from everything sent to Jev (upstream #98),
+  including passwords inside serialised tool inputs, short or dotted
+  passwords, any-case bearer tokens and Stripe secret keys.
 - At most 128 questions per request and four requests in flight.
-- One deadline per Jev round (upstream #117), 60 s by default.
+- One deadline per Jev round (upstream #117), 60 s by default; at the deadline,
+  or when Claude Code ends the hook's dispatch, no further request is started.
 - Lone surrogates never reach the request; cuts never split a surrogate pair
   (upstream #110, #128).
 - Hashes, UUIDs and base64 are no longer undercounted in the token estimate
