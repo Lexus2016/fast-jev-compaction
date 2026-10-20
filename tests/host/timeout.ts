@@ -64,7 +64,7 @@ test('deadline skips plugin compaction; late responses cannot install it', async
   // Calls Jev rates unneeded stay as stubs: as many messages, their outputs replaced by a note.
   expect(retried.messages?.length).toBe(messages.length);
   expect(retried.messages?.[2]?.toolResults?.[0]?.text).toBe(
-    '[fast-jev-compaction removed the 2000-char output of this call; re-run the tool if needed]',
+    '[fast-jev-compaction removed the 2000-char output of this call; it was read in full when the call ran; re-run the tool if needed]',
   );
   expect(retried.messages?.[0]?.text).toBe('Continue the task.');
   await clock.advance(120_000);

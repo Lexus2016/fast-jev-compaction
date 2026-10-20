@@ -129,7 +129,7 @@ export function isPinned(
  * trade a head for a note, at the price of a request per round.
  */
 export const REDUCED_RESULT_NOTE =
-  /\[fast-jev-compaction (?:removed the \d+-char output of this call|truncated \d+ chars of this tool result(?: \(error\))?); re-run the tool if needed\]$/;
+  /\[fast-jev-compaction (?:removed the \d+-char output of this call|truncated \d+ chars of this tool result(?: \(error\))?)(?:; it was read in full when the call ran)?; re-run the tool if needed\]$/;
 
 export function collectToolCalls(
   messages: readonly Message[],

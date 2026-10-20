@@ -291,9 +291,11 @@ export function summarize(result: CompactResult): string {
     stats.pinned > 0 ? `${stats.pinned} pinned` : '',
     stats.settled > 0 ? `${stats.settled} settled` : '',
   ].filter(Boolean);
-  return `${percent(reductionRatio(result))} reduction; ${
-    parts.join(', ') || 'no tool calls'
-  }; state ~${stats.stateTokens} tokens (${stats.stateStage}) in ${stats.requests} request(s)`;
+  return `${percent(reductionRatio(result))} reduction; ${parts.join(', ') || 'no tool calls'}; ${
+    stats.requests === 0
+      ? 'no Jev request'
+      : `state ~${stats.stateTokens} tokens (${stats.stateStage}) in ${stats.requests} request(s)`
+  }`;
 }
 
 const UI_LOG_MAX_CHARS = 4096;

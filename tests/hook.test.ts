@@ -198,9 +198,10 @@ describe('compactSession', () => {
     expect(output.decisions.map((d) => d.action)).toEqual(['stub_call', 'keep']);
     expect(messages.map((m) => m.handle)).toEqual(['h-0', 'h-tool-1', undefined, 'h-tool-2', 'r-tool-2', 'h-5', 'h-6']);
     expect(messages[2]?.toolResults?.[0]?.text).toBe(
-      `[fast-jev-compaction removed the ${fileA.length}-char output of this call; re-run the tool if needed]`,
+      `[fast-jev-compaction removed the ${fileA.length}-char output of this call; it was read in full when the call ran; re-run the tool if needed]`,
     );
     expect(summarize(output)).toMatch(/^\d+% reduction; 1 kept, 1 calls stubbed; state ~\d+ tokens \(full\) in 1 request\(s\)$/);
+    expect(summarize({ ...output, stats: { ...output.stats, requests: 0 } })).toMatch(/; no Jev request$/);
     expect(decisionLog(output)).toBe('t1:Read:stub_call/call=0.10/result=0.10 t2:Bash:keep/call=0.90/result=0.90');
     expect(decisionLogLines(output)).toEqual([`decisions: ${decisionLog(output)}`]);
   });

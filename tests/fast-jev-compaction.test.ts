@@ -356,20 +356,20 @@ describe('decisions', () => {
 
     const kept = applyDecisions(messages, decisions, calls, 50);
     expect(kept[2]?.toolResults?.[0]?.text).toBe(
-      `${original.slice(0, 50)}\n[fast-jev-compaction truncated ${total - 50} chars of this tool result; re-run the tool if needed]`,
+      `${original.slice(0, 50)}\n[fast-jev-compaction truncated ${total - 50} chars of this tool result; it was read in full when the call ran; re-run the tool if needed]`,
     );
     expect(kept[1]).toBe(messages[1]);
 
     const noHead = applyDecisions(messages, decisions, calls, 0);
     expect(noHead[2]?.toolResults?.[0]?.text).toBe(
-      `[fast-jev-compaction truncated ${total} chars of this tool result; re-run the tool if needed]`,
+      `[fast-jev-compaction truncated ${total} chars of this tool result; it was read in full when the call ran; re-run the tool if needed]`,
     );
   });
 
   it('never cuts the head of a dropped result inside a surrogate pair', () => {
     const emoji = '\u{1F600}';
     const note = (omitted: number): string =>
-      `[fast-jev-compaction truncated ${omitted} chars of this tool result; re-run the tool if needed]`;
+      `[fast-jev-compaction truncated ${omitted} chars of this tool result; it was read in full when the call ran; re-run the tool if needed]`;
     const truncated = (text: string): string | undefined => {
       const messages = transcript();
       messages[1]!.toolUses[0]!.text = text;
@@ -393,7 +393,7 @@ describe('stubbed calls and parallel responses', () => {
   const options = { keepThreshold: 0.5 };
   const stub = { keepCall: 0.1, keepResult: 0.1 };
   const note = (chars: number): string =>
-    `[fast-jev-compaction removed the ${chars}-char output of this call; re-run the tool if needed]`;
+    `[fast-jev-compaction removed the ${chars}-char output of this call; it was read in full when the call ran; re-run the tool if needed]`;
 
   it('keeps a stubbed call whole, however long its input, and replaces its output with a note', () => {
     const script = `cat <<'EOF' > build.sh\n${'echo step\n'.repeat(80)}EOF`;
@@ -755,6 +755,14 @@ describe('repeated compaction', () => {
     expect(note('y'.repeat(2000))).toBe(true);
     expect(note(`Error: boom\n${'z'.repeat(2000)}`, true)).toBe(true);
     const plain = [message('user', 'go'), call('x', 'Bash', {}, 'ok'), result('x', 'ok; re-run the tool if needed]'), message('user', 'n')];
+    // Notes an upstream or an earlier fork version wrote are settled too.
+    for (const old of [
+      `${'h'.repeat(300)}\n[fast-jev-compaction truncated 1700 chars of this tool result; re-run the tool if needed]`,
+      '[fast-jev-compaction removed the 2000-char output of this call; re-run the tool if needed]',
+    ]) {
+      const legacy = [message('user', 'go'), call('x', 'Bash', {}, old), result('x', old), message('user', 'n')];
+      expect(collectToolCalls(legacy, 0)[0]!.settled).toBe(true);
+    }
     expect(collectToolCalls(plain, 0)[0]!.settled).toBe(false);
   });
 });

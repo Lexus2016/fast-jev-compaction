@@ -160,6 +160,12 @@ function splitsSurrogatePair(text: string, index: number): boolean {
   return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
 }
 
+/**
+ * Said in every note: without it a model has taken its own earlier answers,
+ * given while the output was in front of it, for guesses made without it.
+ */
+const READ_WHEN_RAN = 'it was read in full when the call ran';
+
 function truncatedResultText(text: string, isError: boolean, headChars: number): string {
   if (text.length <= headChars + 120) return text;
   // End the head on a code point boundary: cutting a surrogate pair in half
@@ -168,7 +174,7 @@ function truncatedResultText(text: string, isError: boolean, headChars: number):
   const head = cut > 0 ? `${text.slice(0, cut)}\n` : '';
   return `${head}[fast-jev-compaction truncated ${text.length - cut} chars of this tool result${
     isError ? ' (error)' : ''
-  }; re-run the tool if needed]`;
+  }; ${READ_WHEN_RAN}; re-run the tool if needed]`;
 }
 
 /**
@@ -180,7 +186,7 @@ function truncatedResultText(text: string, isError: boolean, headChars: number):
  */
 function stubResultText(text: string, isError: boolean, headChars: number): string {
   if (isError || text.length <= headChars + 120) return truncatedResultText(text, isError, headChars);
-  return `[fast-jev-compaction removed the ${text.length}-char output of this call; re-run the tool if needed]`;
+  return `[fast-jev-compaction removed the ${text.length}-char output of this call; ${READ_WHEN_RAN}; re-run the tool if needed]`;
 }
 
 /**
