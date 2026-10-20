@@ -10,6 +10,7 @@ import type {
 
 import { jevAsker, type JevFetch, type JevFetchInit, type JevFetchResponse } from '../src/asker.js';
 import { compact, dropStubbedCalls, reductionRatio, resolveOptions } from '../src/compact.js';
+import { looksOpaque } from '../src/redact.js';
 import { DEFAULT_MODEL } from '../src/request.js';
 import type {
   CompactOptions,
@@ -197,11 +198,12 @@ export async function compactSession(
   fetchFn: HookFetch,
   onRedact?: (count: number) => void,
   signal?: AbortSignal,
+  known: readonly string[] = [],
 ): Promise<SessionCompaction> {
   if (!config.apiKey) throw new Error('TYPESAFE_API_KEY is not configured');
   const result = await compact(
     messages,
-    jevAsker(fetchFn, config.apiKey, config.model, onRedact),
+    jevAsker(fetchFn, config.apiKey, config.model, onRedact, { known }),
     config,
     signal,
   );
@@ -309,23 +311,51 @@ export function decisionLogLines(
   );
 }
 
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The string entries of `settings.env`: the only environment the hook can
+ * enumerate. Settings that cannot be read leave it empty rather than costing
+ * the compaction (the key may still come from the process environment).
+ */
+async function readSettingsEnv($: {
+  settings: { read: () => Promise<Readonly<Record<string, unknown>>> };
+}): Promise<Record<string, string>> {
+  let env: unknown;
+  try {
+    env = (await $.settings.read())['env'];
+  } catch {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  if (isRecord(env)) for (const [name, value] of Object.entries(env)) if (typeof value === 'string') out[name] = value;
+  return out;
+}
+
+const SECRET_NAME = /KEY|TOKEN|SECRET|PASS|AUTH|CRED/i;
+
+/**
+ * The `settings.env` values redacted wherever they appear in a Jev request:
+ * a secret-named entry, or a value shaped like a token. Every other value
+ * stays (a base URL or a model name is context, not a secret).
+ */
+export function knownSecrets(env: Readonly<Record<string, string>>): string[] {
+  return Object.entries(env)
+    .filter(([name, value]) => value.length >= 8 && (SECRET_NAME.test(name) || looksOpaque(value)))
+    .map(([, value]) => value);
+}
+
 async function getApiKey(
-  $: {
-    env: { get: (name: string) => Promise<string | undefined> };
-    settings: { read: () => Promise<Readonly<Record<string, unknown>>> };
-  },
+  $: { env: { get: (name: string) => Promise<string | undefined> } },
   config: HookConfig,
+  env: Readonly<Record<string, string>>,
 ): Promise<string | undefined> {
   if (config.apiKey) return config.apiKey;
   const fromEnv = await $.env.get('TYPESAFE_API_KEY');
   if (fromEnv) return fromEnv;
-  const settings = await $.settings.read();
-  const env = settings['env'];
-  if (env && typeof env === 'object') {
-    const value = (env as Record<string, unknown>)['TYPESAFE_API_KEY'];
-    if (typeof value === 'string' && value) return value;
-  }
-  return undefined;
+  return env['TYPESAFE_API_KEY'] || undefined;
 }
 
 function notify(
@@ -366,7 +396,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     };
 
     try {
-      const config = { ...configured, apiKey: await getApiKey($, configured) };
+      const env = await readSettingsEnv($);
+      const config = { ...configured, apiKey: await getApiKey($, configured, env) };
       // The transcript gets the reduction only; logDecisions adds the counts.
       const detail = (outcome: CompactResult) =>
         config.logDecisions ? summarize(outcome) : `${percent(reductionRatio(outcome))} reduction`;
@@ -383,6 +414,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
             redacted += count;
           },
           signal,
+          knownSecrets(env),
         ),
         config.compactionTimeoutMs,
         (ms, options) => $.clock.sleep(ms, options),

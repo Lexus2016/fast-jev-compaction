@@ -3,6 +3,7 @@ import {
   compactSession,
   decisionLog,
   decisionLogLines,
+  knownSecrets,
   mayUseBuiltin,
   register,
   resolveHookConfig,
@@ -84,6 +85,42 @@ function jevFetch(answer: (name: string) => number, bodies: string[] = []) {
     return { status: 200, ok: true, text: JSON.stringify({ answers }) };
   };
 }
+
+describe('settings.env values as known secrets', () => {
+  const secret = ['plain', 'word', 'secret', 'value'].join('-');
+  const opaque = ['Zx9Qw8Er7Ty6Ui5', 'Op4As3Df2Gh1Jk0Lz'].join('');
+
+  it('takes secret-named and token-shaped values, and leaves the rest as context', () => {
+    expect(
+      knownSecrets({
+        MY_SERVICE_TOKEN: secret,
+        SOME_SETTING: opaque,
+        ANTHROPIC_BASE_URL: 'https://api.example.com',
+        CLAUDE_CODE_SUBAGENT_MODEL: 'haiku-latest',
+        DB_PASS: 'short',
+      }),
+    ).toEqual([secret, opaque]);
+  });
+
+  it('keeps them out of the Jev request', async () => {
+    const bodies: string[] = [];
+    const host = {
+      env: { get: async (name: string) => (name === 'TYPESAFE_API_KEY' ? 'k'.repeat(16) : undefined) },
+      settings: { read: async () => ({ env: { MY_SERVICE_TOKEN: secret, ANTHROPIC_BASE_URL: 'https://api.example.com' } }) },
+      http: { fetch: jevFetch(() => 0.1, bodies) },
+      ui: { log: () => {}, toast: () => {} },
+      clock: { sleep: (_ms: number, { signal }: { signal: AbortSignal }) => new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')))) },
+    };
+    const messages = transcript();
+    messages[3] = call('tool-2', 'Bash', { command: `curl -u bot:${secret} https://api.example.com/run` }, 'FAIL');
+    await registeredHooks({ preserveRecentMessages: 1 }).get('session.compact')!(host, { trigger: 'manual', messages }, async () => ({ messages: [] }));
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const body of bodies) {
+      expect(body).not.toContain(secret);
+      expect(body).toContain('https://api.example.com');
+    }
+  });
+});
 
 describe('hook config', () => {
   it('reads userConfig values and falls back to defaults', () => {

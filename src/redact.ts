@@ -153,7 +153,8 @@ const AUTH_SCHEME = /\b(Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{16,})/gi;
 const OPAQUE = /(?<![A-Za-z0-9_\-/.\\])[A-Za-z0-9_-]{32,}(?![A-Za-z0-9_\-/.\\])/g;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function looksOpaque(s: string): boolean {
+/** Whether a string looks like a random token rather than an id, digest or name. */
+export function looksOpaque(s: string): boolean {
   if (UUID.test(s)) return false; // ids, not secrets
   if (/^[0-9a-f]{40}$/i.test(s) || /^[0-9a-f]{64}$/i.test(s)) return false; // git / sha256 digests
   const digits = (s.match(/[0-9]/g) ?? []).length;
