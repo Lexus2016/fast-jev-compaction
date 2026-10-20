@@ -1,17 +1,17 @@
 {
-  "name": "fast-jev-compaction",
+  "name": "lexus2016",
   "owner": {
-    "name": "tamaratran",
-    "url": "https://github.com/tamaratran"
+    "name": "Lexus2016",
+    "url": "https://github.com/Lexus2016"
   },
   "plugins": [
     {
       "name": "fast-jev-compaction",
       "source": "./",
-      "description": "Verbatim Jev-guided compaction for Claude Code sessions.",
-      "version": "0.3.0",
+      "description": "Verbatim Jev-guided compaction for Claude Code sessions: stale tool outputs become a note, every call and message stays word for word. Maintained fork of tamaratran/fast-jev-compaction.",
+      "version": "0.4.0",
       "license": "MIT"
     }
   ],
-  "description": "Replace Claude Code compaction summaries with verbatim Jev-scored history pruning."
+  "description": "Maintained fork of fast-jev-compaction: verbatim Jev-scored compaction for Claude Code, with the upstream community fixes reviewed and ported."
 }

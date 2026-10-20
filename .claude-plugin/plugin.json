@@ -1,7 +1,7 @@
 {
   "name": "fast-jev-compaction",
-  "version": "0.3.0",
-  "description": "Verbatim Jev-guided compaction for Claude Code sessions.",
+  "version": "0.4.0",
+  "description": "Verbatim Jev-guided compaction for Claude Code sessions: stale tool outputs become a note, every call and message stays word for word. Maintained fork of tamaratran/fast-jev-compaction.",
   "license": "MIT",
   "userConfig": {
     "apiKey": {
@@ -86,5 +86,7 @@
   "author": {
     "name": "tamaratran",
     "url": "https://github.com/tamaratran"
-  }
+  },
+  "homepage": "https://github.com/Lexus2016/fast-jev-compaction",
+  "repository": "https://github.com/Lexus2016/fast-jev-compaction"
 }
