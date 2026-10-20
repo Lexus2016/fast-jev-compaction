@@ -10,23 +10,20 @@ export interface JevRequest {
   body: string;
 }
 
-/**
- * Lone surrogates as `JSON.stringify` emits them: `\udXXX` escape sequences.
- * A high-surrogate escape not followed by a low-surrogate escape, or a
- * low-surrogate escape not preceded by a high-surrogate escape.
- */
-const ESCAPED_LONE_SURROGATE =
-  /\\ud[89ab][0-9a-f]{2}(?!\\ud[c-f][0-9a-f]{2})|(?<!\\ud[89ab][0-9a-f]{2})\\ud[c-f][0-9a-f]{2}/gi;
+/** A high surrogate not followed by a low one, or a low one not preceded by a high one. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 /**
- * Backstop for #128: `JSON.stringify` escapes any lone surrogate still in the
- * state as a `\udXXX` sequence, which the API rejects with "Request contains
- * invalid Unicode text". Replace those escapes with U+FFFD. The cuts in
- * `state.ts` already avoid splitting surrogate pairs; this covers lone
- * surrogates that arrive from anywhere else (e.g. raw tool output).
+ * Backstop for #128, as a `JSON.stringify` replacer: a lone surrogate left in
+ * any string of the request becomes U+FFFD before it is serialised, since
+ * `JSON.stringify` would escape it as `\udXXX` and the API rejects that with
+ * "Request contains invalid Unicode text". The cuts in `state.ts` already
+ * avoid splitting pairs; this covers lone surrogates from anywhere else (raw
+ * tool output). Working on the strings, not the JSON text, leaves a literal
+ * `\ud800` that a tool printed as it is.
  */
-function wellFormedJson(json: string): string {
-  return json.replace(ESCAPED_LONE_SURROGATE, '\\ufffd');
+function wellFormed(_key: string, value: unknown): unknown {
+  return typeof value === 'string' ? value.replace(LONE_SURROGATE, '�') : value;
 }
 
 /** The HTTP request for one Jev call, for any fetch-like transport. */
@@ -46,12 +43,13 @@ export function buildJevRequest(
       authorization: `Bearer ${params.apiKey}`,
       'content-type': 'application/json',
     },
-    body: wellFormedJson(
-      JSON.stringify({
+    body: JSON.stringify(
+      {
         model: params.model ?? DEFAULT_MODEL,
         state,
         questions,
-      }),
+      },
+      wellFormed,
     ),
   };
 }

@@ -615,8 +615,17 @@ describe('surrogate-safe cuts (#128)', () => {
       q: { type: 'noul', instructions: 'x' },
     });
     // The lone surrogate must not reach the wire as \ud83d (the API 400s on it).
-    expect(request.body).not.toMatch(/\\ud83d(?!\\ud[c-f][0-9a-f]{2})/i);
-    expect(request.body).toContain('\\ufffd');
+    expect(request.body).not.toMatch(/\\ud83d/i);
+    expect(JSON.parse(request.body).state).toEqual({ evil: '�' });
+    // A tool that printed the six characters `\ud800` keeps them: only real surrogates are replaced.
+    const literal = buildJevRequest({ apiKey: 'k' }, { text: 'escape \\ud800 and \\udc00' } as never, {
+      q: { type: 'noul', instructions: 'x' },
+    });
+    expect(JSON.parse(literal.body).state).toEqual({ text: 'escape \\ud800 and \\udc00' });
+    const lowFirst = buildJevRequest({ apiKey: 'k' }, { t: 'a\uDC00b😀c\uD800' } as never, {
+      q: { type: 'noul', instructions: 'x' },
+    });
+    expect(JSON.parse(lowFirst.body).state).toEqual({ t: 'a�b😀c�' });
     // A well-formed pair still round-trips untouched.
     const paired = buildJevRequest({ apiKey: 'k' }, { ok: '🔥' } as never, {
       q: { type: 'noul', instructions: 'x' },
