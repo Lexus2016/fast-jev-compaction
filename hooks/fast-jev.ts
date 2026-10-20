@@ -242,12 +242,14 @@ export async function compactSession(
   config: HookConfig,
   fetchFn: HookFetch,
   onRedact?: (count: number) => void,
+  signal?: AbortSignal,
 ): Promise<SessionCompaction> {
   if (!config.apiKey) throw new Error('TYPESAFE_API_KEY is not configured');
   const result = await compact(
     messages,
     jevAsker(fetchFn, config.apiKey, config.model, onRedact),
     config,
+    signal,
   );
   return { result, messages: toSessionMessages(messages, result.messages) };
 }
@@ -258,22 +260,34 @@ class CompactionTimeoutError extends Error {
   }
 }
 
-/** Bound the entire Jev round, including all batches, using the host's clock. */
+/**
+ * Bound the entire Jev round, including all batches, using the host's clock.
+ * `work` gets a signal that aborts at the deadline, or when `dispatch` (the
+ * hook's `next.signal`) does, so no further Jev request is started for a
+ * round nobody will use.
+ */
 export async function withCompactionDeadline<T>(
-  work: () => Promise<T>,
+  work: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
   sleep: (ms: number, options: { signal: AbortSignal }) => Promise<void>,
+  dispatch?: AbortSignal,
 ): Promise<T> {
   const timer = new AbortController();
+  const cancel = new AbortController();
+  const stop = (): void => cancel.abort();
+  if (dispatch?.aborted) stop();
+  dispatch?.addEventListener('abort', stop, { once: true });
   const deadline = sleep(timeoutMs, { signal: timer.signal }).then(() => {
+    stop();
     throw new CompactionTimeoutError(timeoutMs);
   });
   try {
     // Race observes late rejections too. A late response cannot install a
     // second compaction after the deadline has already settled this round.
-    return await Promise.race([Promise.resolve().then(work), deadline]);
+    return await Promise.race([Promise.resolve().then(() => work(cancel.signal)), deadline]);
   } finally {
     timer.abort();
+    dispatch?.removeEventListener('abort', stop);
   }
 }
 
@@ -393,7 +407,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       const config = { ...configured, apiKey: await getApiKey($, configured) };
       let redacted = 0;
       const { result, messages } = await withCompactionDeadline(
-        () => compactSession(
+        (signal) => compactSession(
           event.messages,
           config,
           async (url, init) => {
@@ -403,9 +417,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
           (count) => {
             redacted += count;
           },
+          signal,
         ),
         config.compactionTimeoutMs,
         (ms, options) => $.clock.sleep(ms, options),
+        next.signal,
       );
       if (redacted > 0) $.ui.log(`redacted ${redacted} secret-shaped value(s) from the Jev request`);
       if (config.logDecisions) for (const line of decisionLogLines(result)) $.ui.log(line);

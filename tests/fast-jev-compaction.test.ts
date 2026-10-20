@@ -676,6 +676,13 @@ describe('windowed states when the history does not fit', () => {
     expect(out.stats.requests).toBe(seen.length);
   });
 
+  it('keeps an unasked call even with a threshold above one', async () => {
+    const out = await compact(long(1), fakeJev(() => 0), { maxStateTokens: 1, keepThreshold: 1.1, preserveRecentMessages: 0 });
+    expect(out.stats.stateStage).toMatch(/unasked:1/);
+    expect(out.decisions.map((d) => [d.action, d.reason])).toEqual([['keep', 'kept']]);
+    expect(out.stats.callsStubbed).toBe(0);
+  });
+
   it('keeps a call that no window can fit, instead of throwing', async () => {
     const messages = long(5);
     const seen: Seen[] = [];
@@ -709,6 +716,28 @@ describe('windowed states when the history does not fit', () => {
     expect(requests).toBeGreaterThan(4);
     expect(out.stats.requests).toBe(requests);
     expect(peak).toBe(4);
+  });
+
+  it('starts no further request once the round is cancelled', async () => {
+    let started = 0;
+    const release: Array<() => void> = [];
+    const asker: JevAsker = {
+      async ask(_state, questions) {
+        started += 1;
+        await new Promise<void>((resolve) => release.push(resolve));
+        const keep: JevAnswer = { type: 'noul', noul: 0.9 };
+        return { answers: Object.fromEntries(Object.keys(questions).map((k) => [k, keep])) };
+      },
+    };
+    const cancel = new AbortController();
+    const pending = compact(long(400), asker, options, cancel.signal);
+    const outcome = pending.then(() => 'resolved', (error: Error) => error.message);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(started).toBe(4);
+    cancel.abort();
+    for (const go of release.splice(0)) go();
+    expect(await outcome).toMatch(/cancelled/);
+    expect(started).toBe(4);
   });
 
   it('starts no further request once one has failed', async () => {

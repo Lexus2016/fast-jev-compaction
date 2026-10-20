@@ -331,19 +331,21 @@ const MAX_CONCURRENT_REQUESTS = 4;
 
 /**
  * Maps `items` through `fn` with at most `limit` calls in flight, keeping the
- * order. On the first failure no further item is started and the failure is
- * thrown once the calls in flight have settled.
+ * order. On the first failure, or once `signal` aborts, no further item is
+ * started; the failure (or the cancellation) is thrown once the calls in
+ * flight have settled.
  */
 async function mapLimit<T, R>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<R>,
+  signal?: AbortSignal,
 ): Promise<R[]> {
   const results = new Array<R>(items.length);
   let next = 0;
   let failed = false;
   const worker = async (): Promise<void> => {
-    while (!failed && next < items.length) {
+    while (!failed && !signal?.aborted && next < items.length) {
       const index = next++;
       try {
         results[index] = await fn(items[index]!);
@@ -354,6 +356,7 @@ async function mapLimit<T, R>(
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (signal?.aborted) throw new Error('compaction cancelled before every Jev request was made');
   return results;
 }
 
@@ -436,6 +439,7 @@ export async function compact(
   messages: readonly Message[],
   asker: JevAsker,
   options: CompactOptions = {},
+  signal?: AbortSignal,
 ): Promise<CompactResult> {
   const started = Date.now();
   const resolved = resolveOptions(options);
@@ -456,17 +460,30 @@ export async function compact(
       })),
     );
     requests = jobs.length;
-    const answered = await mapLimit(jobs, MAX_CONCURRENT_REQUESTS, (job) =>
-      askBatch(asker, job.state, job.batch),
+    const answered = await mapLimit(
+      jobs,
+      MAX_CONCURRENT_REQUESTS,
+      (job) => askBatch(asker, job.state, job.batch),
+      signal,
     );
     for (const map of answered) for (const [id, answer] of map) answers.set(id, answer);
   }
 
-  const decisions = calls.map((call): CallDecision =>
-    call.settled && !call.pinned
-      ? { id: call.id, tool: call.tool, keepCall: 1, keepResult: 1, action: 'keep', reason: 'settled' }
-      : decideCall(call, answers.get(call.id) ?? { keepCall: 1, keepResult: 1 }, resolved),
-  );
+  const decisions = calls.map((call): CallDecision => {
+    const keep = (reason: CallDecision['reason']): CallDecision => ({
+      id: call.id,
+      tool: call.tool,
+      keepCall: 1,
+      keepResult: 1,
+      action: 'keep',
+      reason,
+    });
+    if (call.pinned) return keep('pinned');
+    if (call.settled) return keep('settled');
+    const answer = answers.get(call.id);
+    // A call Jev was not asked about (no window could fit it) stays whatever the threshold.
+    return answer ? decideCall(call, answer, resolved) : keep('kept');
+  });
   const kept = applyDecisions(
     messages,
     decisions,

@@ -133,6 +133,40 @@ describe('compaction deadline', () => {
     }
   });
 
+  it('aborts the work signal at the deadline and when the dispatch ends', async () => {
+    let expire!: () => void;
+    let seen: AbortSignal | undefined;
+    const atDeadline = withCompactionDeadline(
+      (signal) => {
+        seen = signal;
+        return new Promise<never>(() => {});
+      },
+      1234,
+      () => new Promise((resolve) => { expire = resolve; }),
+    );
+    const assertion = expect(atDeadline).rejects.toThrow('timed out');
+    await Promise.resolve(); // work starts on the next microtask
+    expect(seen?.aborted).toBe(false);
+    expire();
+    await assertion;
+    expect(seen?.aborted).toBe(true);
+
+    const dispatch = new AbortController();
+    let work: AbortSignal | undefined;
+    const done = withCompactionDeadline(
+      async (signal) => {
+        work = signal;
+        dispatch.abort();
+        return 'finished';
+      },
+      1234,
+      (_ms, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')))),
+      dispatch.signal,
+    );
+    await expect(done).resolves.toBe('finished');
+    expect(work?.aborted).toBe(true);
+  });
+
   it('settles at the deadline even if work is still pending and rejects later', async () => {
     let expire!: () => void;
     let rejectWork!: (error: Error) => void;
