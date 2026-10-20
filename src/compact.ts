@@ -47,7 +47,8 @@ function finite(value: number | undefined, fallback: number): number {
 export function resolveOptions(options: CompactOptions = {}): ResolvedCompactOptions {
   return {
     goal: options.goal ?? DEFAULT_OPTIONS.goal,
-    keepThreshold: finite(options.keepThreshold, DEFAULT_OPTIONS.keepThreshold),
+    // A probability threshold: above 1 every call would be stubbed, below 0 none.
+    keepThreshold: Math.min(1, Math.max(0, finite(options.keepThreshold, DEFAULT_OPTIONS.keepThreshold))),
     preserveRecentMessages: Math.max(
       0,
       Math.floor(

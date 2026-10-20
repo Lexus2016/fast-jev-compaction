@@ -122,6 +122,12 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
     builtinFallback: optionFallback(options),
   };
   if (config.compactionTimeoutMs <= 0) config.compactionTimeoutMs = HOOK_DEFAULTS.compactionTimeoutMs;
+  // Outside (0, 100] is a mistake: 0 or less would ask for a compaction after
+  // every answer, and 100 already means only once the context is full.
+  if (config.compactAtPercent <= 0 || config.compactAtPercent > 100) {
+    config.compactAtPercent = HOOK_DEFAULTS.compactAtPercent;
+  }
+  config.minReductionRatio = Math.min(1, Math.max(0, config.minReductionRatio));
   const apiKey = optionString(options, 'apiKey');
   if (apiKey) config.apiKey = apiKey;
   const goal = optionString(options, 'goal');

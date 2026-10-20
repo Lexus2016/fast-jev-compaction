@@ -54,7 +54,31 @@ export function buildJevRequest(
   };
 }
 
-/** Validates a Jev response body; throws on anything but an `answers` object. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isProbabilities(value: unknown): value is Record<string, number> {
+  return isRecord(value) && Object.values(value).every((p) => typeof p === 'number');
+}
+
+function isJevAnswer(value: unknown): value is JevAnswer {
+  if (!isRecord(value)) return false;
+  if ('noul' in value) return typeof value['noul'] === 'number';
+  if ('choice' in value) {
+    return typeof value['choice'] === 'string' && typeof value['confidence'] === 'number' && isProbabilities(value['probabilities']);
+  }
+  if ('score' in value) {
+    return typeof value['score'] === 'number' && typeof value['confidence'] === 'number' && isProbabilities(value['probabilities']);
+  }
+  return false;
+}
+
+/**
+ * Validates a Jev response body; throws on anything but an `answers` object.
+ * An answer of no known shape is left out, so asking for it fails like a
+ * missing one.
+ */
 export function parseJevResponse(
   status: number,
   ok: boolean,
@@ -69,31 +93,36 @@ export function parseJevResponse(
   } catch {
     throw new Error('Jev returned malformed JSON');
   }
-  if (
-    parsed === null ||
-    typeof parsed !== 'object' ||
-    !('answers' in parsed) ||
-    parsed.answers === null ||
-    typeof parsed.answers !== 'object'
-  ) {
+  if (!isRecord(parsed) || !isRecord(parsed['answers'])) {
     throw new Error('Jev response is missing answers');
   }
-  return parsed as JevResponse;
+  const answers: Record<string, JevAnswer> = {};
+  for (const [name, answer] of Object.entries(parsed['answers'])) {
+    if (isJevAnswer(answer)) answers[name] = answer;
+  }
+  const response: JevResponse = { answers };
+  if (typeof parsed['model'] === 'string') response.model = parsed['model'];
+  return response;
 }
 
-/** The `noul` probability of one answer; throws when it is not there. */
+/** How far outside [0, 1] a probability may land from rounding before it counts as wrong. */
+const RANGE_TOLERANCE = 1e-6;
+
+/**
+ * The `noul` probability of one answer; throws when it is missing or outside
+ * [0, 1], so a malformed scoring fails the round (and takes the fallback)
+ * instead of stubbing or keeping a call on a meaningless number.
+ */
 export function noulAnswer(
   answers: Record<string, JevAnswer>,
   name: string,
 ): number {
   const answer = answers[name];
-  if (
-    !answer ||
-    !('noul' in answer) ||
-    typeof answer.noul !== 'number' ||
-    !Number.isFinite(answer.noul)
-  ) {
+  if (!answer || !('noul' in answer) || !Number.isFinite(answer.noul)) {
     throw new Error(`Invalid Jev answer for ${name}`);
   }
-  return answer.noul;
+  if (answer.noul < -RANGE_TOLERANCE || answer.noul > 1 + RANGE_TOLERANCE) {
+    throw new Error(`Jev answer for ${name} is out of range: ${answer.noul}`);
+  }
+  return Math.min(1, Math.max(0, answer.noul));
 }

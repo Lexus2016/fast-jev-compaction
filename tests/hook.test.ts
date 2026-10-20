@@ -122,6 +122,15 @@ describe('settings.env values as known secrets', () => {
   });
 });
 
+describe('hook config bounds', () => {
+  it('replaces a compactAtPercent outside (0, 100] and clamps minReductionRatio', () => {
+    for (const compactAtPercent of [0, -5, 150]) expect(resolveHookConfig({ compactAtPercent }).compactAtPercent).toBe(60);
+    expect(resolveHookConfig({ compactAtPercent: 100 }).compactAtPercent).toBe(100);
+    expect(resolveHookConfig({ minReductionRatio: 2 }).minReductionRatio).toBe(1);
+    expect(resolveHookConfig({ minReductionRatio: -1 }).minReductionRatio).toBe(0);
+  });
+});
+
 describe('hook config', () => {
   it('reads userConfig values and falls back to defaults', () => {
     expect(resolveHookConfig({})).toEqual({ compactAtPercent: 60, minReductionRatio: 0.25, model: 'jev-latest', compactionTimeoutMs: 60000, logDecisions: false, builtinFallback: 'auto' });

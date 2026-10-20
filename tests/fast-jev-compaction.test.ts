@@ -12,6 +12,7 @@ import {
   fitState,
   HistoryTooLargeError,
   JevClient,
+  noulAnswer,
   parseJevResponse,
   reductionRatio,
   resolveOptions,
@@ -94,6 +95,11 @@ describe('options', () => {
       preserveRecentMessages: 2,
       truncateHeadChars: 0,
     });
+  });
+
+  it('keeps keepThreshold a probability', () => {
+    expect(resolveOptions({ keepThreshold: 5 }).keepThreshold).toBe(1);
+    expect(resolveOptions({ keepThreshold: -1 }).keepThreshold).toBe(0);
   });
 });
 
@@ -573,6 +579,17 @@ describe('HTTP client', () => {
     expect(() => parseJevResponse(200, true, 'not json')).toThrow(/malformed/);
     expect(() => parseJevResponse(200, true, '{}')).toThrow(/missing answers/);
     expect(parseJevResponse(200, true, '{"answers":{}}')).toEqual({ answers: {} });
+  });
+
+  it('fails an answer outside [0, 1] and clamps rounding noise', () => {
+    const noul = (value: unknown): number =>
+      noulAnswer(parseJevResponse(200, true, JSON.stringify({ answers: { q: { noul: value } } })).answers, 'q');
+    expect(() => noul(-1)).toThrow(/out of range/);
+    expect(() => noul(2)).toThrow(/out of range/);
+    expect(() => noul('0.4')).toThrow(/Invalid Jev answer/);
+    expect(noul(1 + 1e-9)).toBe(1);
+    expect(noul(-1e-9)).toBe(0);
+    expect(noul(0.37)).toBe(0.37);
   });
 
   it('asks over fetch and refuses to run without a key', async () => {

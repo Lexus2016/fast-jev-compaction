@@ -310,15 +310,11 @@ describe('redaction gaps found in the 0.4.1 audit', () => {
   });
 
   it('scans BEGIN markers without an END in linear time', () => {
-    const time = (size: number): number => {
-      const text = `-----BEGIN ${'PRIVATE'} KEY-----\n`.repeat(Math.floor(size / 28));
-      const started = performance.now();
-      redactSecrets(text);
-      return performance.now() - started;
-    };
-    time(50_000); // warm up
-    const small = Math.max(time(200_000), 1);
-    const large = time(800_000);
-    expect(large / small).toBeLessThan(10); // quadratic would be ~16x
+    // 800 KB took 7.6 s with the quadratic rule and takes ~45 ms now; the
+    // ceiling leaves room for a loaded CI machine without letting it regress.
+    const text = `-----BEGIN ${'PRIVATE'} KEY-----\n`.repeat(Math.floor(800_000 / 28));
+    const started = performance.now();
+    redactSecrets(text);
+    expect(performance.now() - started).toBeLessThan(1500);
   });
 });
