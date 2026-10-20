@@ -9,11 +9,13 @@ import type {
 } from 'claude-code';
 
 import { compact, reductionRatio, resolveOptions } from '../src/compact.js';
+import { redactDeep } from '../src/redact.js';
 import { buildJevRequest, DEFAULT_MODEL, parseJevResponse } from '../src/request.js';
 import type {
   CompactOptions,
   CompactResult,
   JevAsker,
+  JevState,
   Message,
   ToolResult,
   ToolUse,
@@ -97,11 +99,28 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   return config;
 }
 
-/** A `JevAsker` over the engine's `$.http.fetch`. */
-export function jevAsker(fetchFn: HookFetch, apiKey: string, model: string): JevAsker {
+/**
+ * A `JevAsker` over the engine's `$.http.fetch`. Secrets are redacted from what
+ * is sent (`onRedact` gets the count). Every batch of one compaction shares the
+ * same state object, so the state is redacted once, not once per batch.
+ */
+export function jevAsker(
+  fetchFn: HookFetch,
+  apiKey: string,
+  model: string,
+  onRedact: (count: number) => void = () => {},
+): JevAsker {
+  let redacted: { source: JevState; value: JevState } | undefined;
   return {
     async ask(state, questions) {
-      const request = buildJevRequest({ apiKey, model }, state, questions);
+      if (redacted?.source !== state) {
+        const safe = redactDeep(state, [apiKey]);
+        redacted = { source: state, value: safe.value };
+        onRedact(safe.count);
+      }
+      const safeQuestions = redactDeep(questions, [apiKey]);
+      if (safeQuestions.count > 0) onRedact(safeQuestions.count);
+      const request = buildJevRequest({ apiKey, model }, redacted.value, safeQuestions.value);
       const response = await fetchFn(request.url, {
         method: request.method,
         headers: request.headers,
@@ -176,9 +195,14 @@ export async function compactSession(
   messages: readonly SessionMessage[],
   config: HookConfig,
   fetchFn: HookFetch,
+  onRedact?: (count: number) => void,
 ): Promise<SessionCompaction> {
   if (!config.apiKey) throw new Error('TYPESAFE_API_KEY is not configured');
-  const result = await compact(messages, jevAsker(fetchFn, config.apiKey, config.model), config);
+  const result = await compact(
+    messages,
+    jevAsker(fetchFn, config.apiKey, config.model, onRedact),
+    config,
+  );
   return { result, messages: toSessionMessages(messages, result.messages) };
 }
 
@@ -306,14 +330,23 @@ export const register: Register = (on: On, options: PluginOptions) => {
 
     try {
       const config = { ...configured, apiKey: await getApiKey($, configured) };
+      let redacted = 0;
       const { result, messages } = await withCompactionDeadline(
-        () => compactSession(event.messages, config, async (url, init) => {
-          const response = await $.http.fetch(url, init);
-          return { status: response.status, ok: response.ok, text: response.text };
-        }),
+        () => compactSession(
+          event.messages,
+          config,
+          async (url, init) => {
+            const response = await $.http.fetch(url, init);
+            return { status: response.status, ok: response.ok, text: response.text };
+          },
+          (count) => {
+            redacted += count;
+          },
+        ),
         config.compactionTimeoutMs,
         (ms, options) => $.clock.sleep(ms, options),
       );
+      if (redacted > 0) $.ui.log(`redacted ${redacted} secret-shaped value(s) from the Jev request`);
       if (config.logDecisions) for (const line of decisionLogLines(result)) $.ui.log(line);
       if (reductionRatio(result) < config.minReductionRatio) {
         notify(
