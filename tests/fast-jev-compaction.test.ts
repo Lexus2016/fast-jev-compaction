@@ -356,20 +356,38 @@ describe('decisions', () => {
 
     const kept = applyDecisions(messages, decisions, calls, 50);
     expect(kept[2]?.toolResults?.[0]?.text).toBe(
-      `${original.slice(0, 50)}\n[fast-jev-compaction truncated ${total - 50} chars of this tool result; it was read in full when the call ran; re-run the tool if needed]`,
+      `${original.slice(0, 50)}\n[fast-jev-compaction truncated ${total - 50} chars of this tool result; it was read in full when the call ran; re-run it only if you need the output again and the call only reads; do not repeat a call that wrote, sent or deleted something just to see its output]`,
     );
     expect(kept[1]).toBe(messages[1]);
 
     const noHead = applyDecisions(messages, decisions, calls, 0);
     expect(noHead[2]?.toolResults?.[0]?.text).toBe(
-      `[fast-jev-compaction truncated ${total} chars of this tool result; it was read in full when the call ran; re-run the tool if needed]`,
+      `[fast-jev-compaction truncated ${total} chars of this tool result; it was read in full when the call ran; re-run it only if you need the output again and the call only reads; do not repeat a call that wrote, sent or deleted something just to see its output]`,
     );
+  });
+
+  it('never makes a result longer, and keeps it verbatim unless 100 chars are freed', () => {
+    const rewritten = (text: string, keepCall: number): string | undefined => {
+      const messages = transcript();
+      messages[2]!.toolResults![0]!.text = text;
+      const calls = collectToolCalls(messages, 0);
+      const decisions = [decideCall(calls[0]!, { keepCall, keepResult: 0.1 }, { keepThreshold: 0.5 })];
+      return applyDecisions(messages, decisions, calls, 300)[2]?.toolResults?.[0]?.text;
+    };
+    for (let length = 300; length <= 1200; length += 7) {
+      const text = 'r'.repeat(length);
+      for (const keepCall of [0.9, 0.1]) {
+        const out = rewritten(text, keepCall)!;
+        expect(out === text || text.length - out.length >= 100).toBe(true);
+      }
+    }
+    expect(rewritten('r'.repeat(500), 0.9)).toBe('r'.repeat(500));
   });
 
   it('never cuts the head of a dropped result inside a surrogate pair', () => {
     const emoji = '\u{1F600}';
     const note = (omitted: number): string =>
-      `[fast-jev-compaction truncated ${omitted} chars of this tool result; it was read in full when the call ran; re-run the tool if needed]`;
+      `[fast-jev-compaction truncated ${omitted} chars of this tool result; it was read in full when the call ran; re-run it only if you need the output again and the call only reads; do not repeat a call that wrote, sent or deleted something just to see its output]`;
     const truncated = (text: string): string | undefined => {
       const messages = transcript();
       messages[1]!.toolUses[0]!.text = text;
@@ -393,7 +411,7 @@ describe('stubbed calls and parallel responses', () => {
   const options = { keepThreshold: 0.5 };
   const stub = { keepCall: 0.1, keepResult: 0.1 };
   const note = (chars: number): string =>
-    `[fast-jev-compaction removed the ${chars}-char output of this call; it was read in full when the call ran; re-run the tool if needed]`;
+    `[fast-jev-compaction removed the ${chars}-char output of this call; it was read in full when the call ran; re-run it only if you need the output again and the call only reads; do not repeat a call that wrote, sent or deleted something just to see its output]`;
 
   it('keeps a stubbed call whole, however long its input, and replaces its output with a note', () => {
     const script = `cat <<'EOF' > build.sh\n${'echo step\n'.repeat(80)}EOF`;
@@ -788,6 +806,8 @@ describe('repeated compaction', () => {
     for (const old of [
       `${'h'.repeat(300)}\n[fast-jev-compaction truncated 1700 chars of this tool result; re-run the tool if needed]`,
       '[fast-jev-compaction removed the 2000-char output of this call; re-run the tool if needed]',
+      // 0.4.x
+      '[fast-jev-compaction removed the 2000-char output of this call; it was read in full when the call ran; re-run the tool if needed]',
     ]) {
       const legacy = [message('user', 'go'), call('x', 'Bash', {}, old), result('x', old), message('user', 'n')];
       expect(collectToolCalls(legacy, 0)[0]!.settled).toBe(true);

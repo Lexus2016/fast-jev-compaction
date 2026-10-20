@@ -6,6 +6,7 @@ import {
   goalFromMessages,
   HistoryTooLargeError,
   isPinned,
+  RERUN_GUIDANCE,
 } from './state.js';
 import type {
   CallAnswer,
@@ -166,27 +167,35 @@ function splitsSurrogatePair(text: string, index: number): boolean {
  */
 const READ_WHEN_RAN = 'it was read in full when the call ran';
 
+/** A rewrite must free at least this many chars; otherwise the output stays verbatim. */
+const MIN_SAVING = 100;
+
 function truncatedResultText(text: string, isError: boolean, headChars: number): string {
-  if (text.length <= headChars + 120) return text;
   // End the head on a code point boundary: cutting a surrogate pair in half
   // would leave a lone surrogate in the rebuilt transcript.
   const cut = splitsSurrogatePair(text, headChars) ? headChars - 1 : headChars;
   const head = cut > 0 ? `${text.slice(0, cut)}\n` : '';
-  return `${head}[fast-jev-compaction truncated ${text.length - cut} chars of this tool result${
+  const out = `${head}[fast-jev-compaction truncated ${text.length - cut} chars of this tool result${
     isError ? ' (error)' : ''
-  }; ${READ_WHEN_RAN}; re-run the tool if needed]`;
+  }; ${READ_WHEN_RAN}; ${RERUN_GUIDANCE}]`;
+  // Measured against the note actually written: a head plus a note longer than
+  // the output it replaces would grow the history and hide the output's end.
+  return text.length - out.length >= MIN_SAVING ? out : text;
 }
 
 /**
  * The result of a stubbed call: a one-line note in place of the output, so
  * the call stays answered and the history says what became of its output. An
  * error keeps its head, since the exact error text is what is worth keeping,
- * and an output no longer than a truncated head (`headChars` + 120) stays as
- * it is: a short output is usually the fact itself (a count, an id, a status).
+ * and an output no longer than `headChars` + 120 stays as it is: a short
+ * output is usually the fact itself (a count, an id, a status). Nor is an
+ * output replaced by a note that frees less than `MIN_SAVING` chars.
  */
 function stubResultText(text: string, isError: boolean, headChars: number): string {
-  if (isError || text.length <= headChars + 120) return truncatedResultText(text, isError, headChars);
-  return `[fast-jev-compaction removed the ${text.length}-char output of this call; ${READ_WHEN_RAN}; re-run the tool if needed]`;
+  if (isError) return truncatedResultText(text, isError, headChars);
+  if (text.length <= headChars + 120) return text;
+  const stub = `[fast-jev-compaction removed the ${text.length}-char output of this call; ${READ_WHEN_RAN}; ${RERUN_GUIDANCE}]`;
+  return text.length - stub.length >= MIN_SAVING ? stub : text;
 }
 
 /**

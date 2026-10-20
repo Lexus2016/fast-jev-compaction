@@ -129,7 +129,15 @@ export function isPinned(
  * trade a head for a note, at the price of a request per round.
  */
 export const REDUCED_RESULT_NOTE =
-  /\[fast-jev-compaction (?:removed the \d+-char output of this call|truncated \d+ chars of this tool result(?: \(error\))?)(?:; it was read in full when the call ran)?; re-run the tool if needed\]$/;
+  /\[fast-jev-compaction (?:removed the \d+-char output of this call|truncated \d+ chars of this tool result(?: \(error\))?)(?:; it was read in full when the call ran)?; (?:re-run the tool if needed|re-run it only if you need the output again and the call only reads; do not repeat a call that wrote, sent or deleted something just to see its output)\]$/;
+
+/**
+ * How every note ends. A plain "re-run the tool" invited a model to repeat a
+ * push, a POST or a send just to see its output again; reads may be re-run,
+ * calls that changed something may not.
+ */
+export const RERUN_GUIDANCE =
+  're-run it only if you need the output again and the call only reads; do not repeat a call that wrote, sent or deleted something just to see its output';
 
 export function collectToolCalls(
   messages: readonly Message[],
