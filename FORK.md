@@ -69,6 +69,7 @@ $.settings.read, $.ui.log, $.ui.toast`; env writes: nothing; env reads:
 | `e408836` | every note says the output was read in full when the call ran | real-Jev smoke: Haiku called its own earlier answers unverified with the old wording |
 | `1eec67d` | redaction: escaped quotes in serialised inputs, short and dotted passwords, any-case `bearer`, Stripe `sk_` keys, no double redaction | independent review (codex) reproduced a password in a Bash command reaching Jev; five new tests and an end-to-end body check fail on the previous code |
 | `4e05b45` | the deadline (or the end of the hook's dispatch) stops the request queue; a call Jev was not asked about is kept whatever the threshold | same review; three new tests fail on the previous code |
+| `4866025` | quoted and very short passwords redacted whole; the work stops however the deadline's wait ends | second review of the fixes; nine new tests fail on the previous code |
 
 ## Considered and not ported
 
@@ -160,8 +161,18 @@ fifth, that `builtinFallback: 'always'` lets `/compact` summarise, is the
 option working as documented. agy's run was cut off; its one finding (no
 explicit pattern for Stripe `sk_live_` keys) is in `1eec67d`.
 
+A second codex review of those fixes confirmed the main cases closed and
+found edge cases (quoted passwords with spaces, one-to-three-char passwords,
+a token inside a password, single-quoted `$` literals, a sleep that rejects
+or throws); all are fixed and tested.
+
 ## Known gaps
 
+- Redaction is pattern-based, as upstream's was: a secret with no recognisable
+  name, prefix or shape still reaches Jev. Known misses: a quoted password
+  holding an escaped quote of its own (`--password="ab\"cd"` keeps `cd`); a
+  password-named JSON value that is not a string (`{"password":1234}`) is
+  replaced unquoted, which only affects the text Jev reads.
 - The Jev state still tells Jev that what is not kept "is deleted
   permanently"; with stubs, only outputs are. Left as is until its effect on
   Jev's calibration is measured.
