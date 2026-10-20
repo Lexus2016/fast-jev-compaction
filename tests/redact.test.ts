@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { jevAsker } from '../hooks/fast-jev.js';
 import { REDACTED, redactDeep, redactSecrets } from '../src/redact.js';
+import type { JevQuestions } from '../src/types.js';
 
 // Fake credentials, assembled at run time so no credential-shaped literal sits in the repo.
 const j = (...parts: string[]) => parts.join('');
@@ -131,14 +132,14 @@ describe('jevAsker', () => {
       'jev-latest',
       (count) => counts.push(count),
     );
-    const state = { goal: `use ${SECRETS.github}` } as never;
-    const question = { call_t1: { type: 'noul', instructions: 'keep?' } } as never;
+    const state = { goal: `use ${SECRETS.github}` };
+    const question: JevQuestions = { call_t1: { type: 'noul', instructions: 'keep?' } };
     await asker.ask(state, question);
     await asker.ask(state, question);
     expect(counts).toEqual([1]);
     expect(bodies).toHaveLength(2);
     for (const body of bodies) expect(body).not.toContain(SECRETS.github);
-    await asker.ask({ goal: `and ${SECRETS.jwt}` } as never, question);
+    await asker.ask({ goal: `and ${SECRETS.jwt}` }, question);
     expect(counts).toEqual([1, 1]);
   });
 });

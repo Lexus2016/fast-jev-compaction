@@ -72,17 +72,28 @@ test('deadline skips plugin compaction; late responses cannot install it', async
   expect(result.messages).toBeUndefined();
 });
 
-for (const trigger of ['manual', 'auto'] as const) {
-  test(`deadline retains ${trigger} compaction fallback`, async ($, on) => {
-    const { state, clock } = host(on);
-    const pending = $.session.compact({ trigger, messages: transcript() });
-    await clock.settle();
-    await clock.advance(60_000);
-    const result = await pending;
-    expect(state.fetches).toBe(1);
-    expect(state.summaries).toBe(1);
-    expect(result.messages?.[0]?.text).toBe('built-in summary');
-    await clock.advance(120_000);
-    expect(state.summaries).toBe(1);
-  });
-}
+test('deadline hands an engine auto compaction to the built-in summary', async ($, on) => {
+  const { state, clock } = host(on);
+  const pending = $.session.compact({ trigger: 'auto', messages: transcript() });
+  await clock.settle();
+  await clock.advance(60_000);
+  const result = await pending;
+  expect(state.fetches).toBe(1);
+  expect(state.summaries).toBe(1);
+  expect(result.messages?.[0]?.text).toBe('built-in summary');
+  await clock.advance(120_000);
+  expect(state.summaries).toBe(1);
+});
+
+test('deadline leaves a /compact unchanged instead of summarising it', async ($, on) => {
+  const { state, clock } = host(on);
+  const pending = $.session.compact({ trigger: 'manual', messages: transcript() });
+  await clock.settle();
+  await clock.advance(60_000);
+  const result = await pending;
+  expect(state.fetches).toBe(1);
+  expect(state.summaries).toBe(0);
+  expect(result.skip).toBe('fast-jev-compaction: Jev compaction timed out after 60000ms; conversation left unchanged');
+  await clock.advance(120_000);
+  expect(state.summaries).toBe(0);
+});

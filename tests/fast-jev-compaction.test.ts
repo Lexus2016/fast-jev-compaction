@@ -17,6 +17,7 @@ import {
   sliceSurrogateSafe,
   truncate,
   type HistoryToolCall,
+  type JevAnswer,
   type JevAsker,
   type JevQuestions,
   type Message,
@@ -619,11 +620,11 @@ describe('surrogate-safe cuts (#128)', () => {
     expect(request.body).not.toMatch(/\\ud83d/i);
     expect(JSON.parse(request.body).state).toEqual({ evil: '�' });
     // A tool that printed the six characters `\ud800` keeps them: only real surrogates are replaced.
-    const literal = buildJevRequest({ apiKey: 'k' }, { text: 'escape \\ud800 and \\udc00' } as never, {
+    const literal = buildJevRequest({ apiKey: 'k' }, { text: 'escape \\ud800 and \\udc00' }, {
       q: { type: 'noul', instructions: 'x' },
     });
     expect(JSON.parse(literal.body).state).toEqual({ text: 'escape \\ud800 and \\udc00' });
-    const lowFirst = buildJevRequest({ apiKey: 'k' }, { t: 'a\uDC00b😀c\uD800' } as never, {
+    const lowFirst = buildJevRequest({ apiKey: 'k' }, { t: 'a\uDC00b😀c\uD800' }, {
       q: { type: 'noul', instructions: 'x' },
     });
     expect(JSON.parse(lowFirst.body).state).toEqual({ t: 'a�b😀c�' });
@@ -687,9 +688,8 @@ describe('windowed states when the history does not fit', () => {
         peak = Math.max(peak, inFlight);
         await new Promise((resolve) => setTimeout(resolve, 2));
         inFlight -= 1;
-        return {
-          answers: Object.fromEntries(Object.keys(questions).map((k) => [k, { type: 'noul' as const, noul: 0.9 }])),
-        };
+        const keep: JevAnswer = { type: 'noul', noul: 0.9 };
+        return { answers: Object.fromEntries(Object.keys(questions).map((k) => [k, keep])) };
       },
     };
     const out = await compact(long(400), asker, options);
