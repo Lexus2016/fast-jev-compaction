@@ -41,13 +41,20 @@ const ASSIGNMENT =
   // repetition is bounded ({0,4}, {1,30}): an unbounded (?:[A-Za-z0-9]+[_-])* backtracks quadratically on snake_case runs
   /((?:[A-Za-z0-9]{1,30}[_-]){0,4}(?:api[_-]?key|apikey|key|token|secret|password|passwd|pwd|auth|credentials?|client[_-]?secret|access[_-]?key)(?:[_-][A-Za-z0-9]{1,30}){0,4}(?:\\?["'])?[ \t]{0,4}[:=][ \t]{0,4}(?:\\?["'])?)([^\s"'`,;)\]}\\<>]{8,})/gi;
 
+/** A password-named key: `DB_PASSWORD`, `passwd`, `"password"` (its closing quote too). */
+const PASSWORD_KEY = String.raw`(?:[A-Za-z0-9]{1,30}[_-]){0,4}(?:password|passwd|pwd)(?:[_-][A-Za-z0-9]{1,30}){0,4}(?:\\?["'])?[ \t]{0,4}[:=][ \t]{0,4}`;
+
 /**
- * A password, however short or dotted: the generic rule above needs 8+ chars
- * and spares member access (`a.b`), which lets `password=hunter2` through.
- * Quotes may come escaped (`\"`), as they do inside a serialised tool input.
+ * A quoted password, however short, spaced or dotted: the whole literal up to
+ * the same quote, which may come escaped (`\"`) as it does inside a serialised
+ * tool input. The generic rule below needs 8+ chars, stops at a space and
+ * spares member access (`a.b`). Runs before the token patterns, so a token
+ * inside a password cannot leave the rest of the password behind.
  */
-const PASSWORD =
-  /((?:[A-Za-z0-9]{1,30}[_-]){0,4}(?:password|passwd|pwd)(?:[_-][A-Za-z0-9]{1,30}){0,4}(?:\\?["'])?[ \t]{0,4}[:=][ \t]{0,4}(?:\\?["'])?)([^\s"'`,;)\]}\\<>]{4,})/gi;
+const PASSWORD_QUOTED = new RegExp(String.raw`(${PASSWORD_KEY})(\\?["'])(.{1,200}?)\2`, 'gi');
+
+/** An unquoted password, from one character. */
+const PASSWORD = new RegExp(String.raw`(${PASSWORD_KEY})([^\s"'\x60,;)\]}\\<>]{1,})`, 'gi');
 
 /** `scheme://user:password@host`: keep the user, drop the password. */
 const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]{1,15}:\/\/[^\s/@:]{1,64}:)([^\s@/]{6,})(@)/gi;
@@ -56,7 +63,7 @@ const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]{1,15}:\/\/[^\s/@:]{1,64}:)([^\s@/]{
 const BASE64 = /(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{32,}={0,2}(?![A-Za-z0-9+/=])/g;
 
 /** `--token value` style flags on command lines. */
-const FLAG = /(--(?:api-?key|token|password|secret|auth|client-secret)[=\s]+(?:\\?["'])?)([^\s"'`\\]{8,})/gi;
+const FLAG = /(--(?:api-?key|token|password|secret|auth|client-secret)[=\s]+(?:\\?["'])?)([^\s"'`\\]{4,})/gi;
 
 /** `Bearer <token>` / `Basic <token>` in headers and curl lines. */
 const AUTH_SCHEME = /\b(Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{16,})/gi;
@@ -104,6 +111,18 @@ export function redactSecrets(text: string, known: readonly string[] = []): Reda
       out = parts.join(REDACTED);
     }
   }
+  out = out.replace(PASSWORD_QUOTED, (m, name: string, quote: string, value: string) => {
+    // In double quotes a shell expands `$VAR`; in single quotes it is the literal password.
+    if (!quote.endsWith("'") && /^[$%]/.test(value)) return m;
+    if (/^(?:true|false|null|undefined|none)$/i.test(value)) return m;
+    count++;
+    return `${name}${quote}${REDACTED}${quote}`;
+  });
+  out = out.replace(PASSWORD, (m, name: string, value: string) => {
+    if (value.includes(REDACTED_HEAD) || /^(?:[$%]|(?:true|false|null|undefined|none)$)/i.test(value)) return m;
+    count++;
+    return `${name}${REDACTED}`;
+  });
   for (const pattern of TOKEN_PATTERNS) {
     out = out.replace(pattern, () => {
       count++;
@@ -135,11 +154,6 @@ export function redactSecrets(text: string, known: readonly string[] = []): Reda
     if (value === REDACTED) return _m;
     count++;
     return `${scheme} ${REDACTED}`;
-  });
-  out = out.replace(PASSWORD, (m, name: string, value: string) => {
-    if (value.includes(REDACTED_HEAD) || /^(?:[$%]|(?:true|false|null|undefined|none)$)/i.test(value)) return m;
-    count++;
-    return `${name}${REDACTED}`;
   });
   out = out.replace(ASSIGNMENT, (m, name: string, value: string) => {
     if (value.includes(REDACTED_HEAD) || looksLikeCode(value)) return m;

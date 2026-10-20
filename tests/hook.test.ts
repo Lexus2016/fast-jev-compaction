@@ -167,12 +167,36 @@ describe('compaction deadline', () => {
     expect(work?.aborted).toBe(true);
   });
 
+  it('stops the work when the wait itself fails, rejecting or throwing', async () => {
+    for (const sleep of [
+      () => Promise.reject(new Error('clock gone')),
+      () => {
+        throw new Error('clock gone');
+      },
+    ]) {
+      const dispatch = new AbortController();
+      let work: AbortSignal | undefined;
+      const pending = withCompactionDeadline(
+        (signal) => {
+          work = signal;
+          return new Promise<never>(() => {});
+        },
+        1234,
+        sleep,
+        dispatch.signal,
+      );
+      await expect(pending).rejects.toThrow('clock gone');
+      expect(work?.aborted).toBe(true);
+    }
+  });
+
   it('settles at the deadline even if work is still pending and rejects later', async () => {
     let expire!: () => void;
     let rejectWork!: (error: Error) => void;
     const work = new Promise<never>((_resolve, reject) => { rejectWork = reject; });
     const pending = withCompactionDeadline(() => work, 1234, () => new Promise((resolve) => { expire = resolve; }));
     const assertion = expect(pending).rejects.toThrow('Jev compaction timed out after 1234ms');
+    await Promise.resolve(); // the wait starts on the next microtask
     expire();
     await assertion;
     rejectWork(new Error('late request failure'));

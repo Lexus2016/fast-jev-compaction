@@ -167,3 +167,27 @@ describe('redaction bypasses found in review', () => {
     }
   });
 });
+
+describe('password literals found in the second review', () => {
+  const S = (command: string) => JSON.stringify({ command });
+  it.each([
+    ['a one-to-three-char password', 'password=abc', /abc/],
+    ['a short dotted password', 'password=a.b', /a\.b/],
+    ['a space-separated password flag', S(`mysql --password ${j('hun', 'ter2')} db`), /hunter2/],
+    ['a single-quoted password with a space', S(`DB_PASSWORD='abc ${j('tail', 'secret')}' psql`), /abc|tailsecret/],
+    ['a double-quoted password with a space', S(`DB_PASSWORD="hello ${j('wor', 'ld')}" psql`), /hello|world/],
+    ['a password starting with a newline', S(`DB_PASSWORD="\n${j('hun', 'ter2')}\n" psql`), /hunter2/],
+    ['a token inside a password', `password=${j('hunter2-', 'sk-test-', 'abcdefghijklmnop')}`, /hunter2|abcdefghijklmnop/],
+    ['a single-quoted literal starting with $', S(`export DB_PASSWORD='$${j('literal', 'Secret')}'`), /literalSecret/],
+    ['a JSON password field with a space', `{"password": "${j('s3cr3t', ' value')}"}`, /s3cr3t/],
+  ])('redacts %s, exactly once', (_name, text, leak) => {
+    const out = redactSecrets(text);
+    expect(out.count).toBe(1);
+    expect(out.text).not.toMatch(leak);
+    expect(out.text).not.toContain(`${REDACTED}]`);
+  });
+
+  it('keeps a double-quoted environment reference, which the shell expands', () => {
+    expect(redactSecrets(JSON.stringify({ command: 'export DB_PASSWORD="$DB_PASS"' })).count).toBe(0);
+  });
+});

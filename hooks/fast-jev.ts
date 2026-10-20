@@ -277,10 +277,18 @@ export async function withCompactionDeadline<T>(
   const stop = (): void => cancel.abort();
   if (dispatch?.aborted) stop();
   dispatch?.addEventListener('abort', stop, { once: true });
-  const deadline = sleep(timeoutMs, { signal: timer.signal }).then(() => {
-    stop();
-    throw new CompactionTimeoutError(timeoutMs);
-  });
+  // However the wait ends (the deadline, a rejected or throwing sleep), the
+  // work is told to stop before the round settles with an error.
+  const deadline = Promise.resolve()
+    .then(() => sleep(timeoutMs, { signal: timer.signal }))
+    .then(
+      () => new CompactionTimeoutError(timeoutMs),
+      (error: unknown) => error,
+    )
+    .then((error) => {
+      stop();
+      throw error;
+    });
   try {
     // Race observes late rejections too. A late response cannot install a
     // second compaction after the deadline has already settled this round.
