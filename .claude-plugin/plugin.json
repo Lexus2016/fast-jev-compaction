@@ -40,6 +40,12 @@
       "description": "Maximum milliseconds to wait for a Jev round, including all request batches. A timed-out plugin request leaves history unchanged; manual and automatic compactions fall back to the built-in summary.",
       "default": 15000
     },
+    "dropCalls": {
+      "type": "boolean",
+      "title": "Remove unneeded calls",
+      "description": "Remove a tool call Jev rates as no longer needed together with its output (upstream behaviour). Off by default: the call stays whole and its output is replaced by a one-line note, so the history still shows every call the assistant made.",
+      "default": false
+    },
     "maxStateTokens": {
       "type": "number",
       "title": "Maximum Jev state tokens",

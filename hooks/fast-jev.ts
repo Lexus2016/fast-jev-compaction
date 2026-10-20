@@ -76,6 +76,7 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
     const value = options[key];
     if (typeof value === 'number' && Number.isFinite(value)) numbers[key] = value;
   }
+  if (typeof options['dropCalls'] === 'boolean') numbers.dropCalls = options['dropCalls'];
   const config: HookConfig = {
     ...numbers,
     compactAtPercent: optionNumber(options, 'compactAtPercent', HOOK_DEFAULTS.compactAtPercent),
@@ -240,6 +241,7 @@ export function summarize(result: CompactResult): string {
   const parts = [
     stats.kept > 0 ? `${stats.kept} kept` : '',
     stats.resultsDropped > 0 ? `${stats.resultsDropped} results truncated` : '',
+    stats.callsStubbed > 0 ? `${stats.callsStubbed} calls stubbed` : '',
     stats.callsDropped > 0 ? `${stats.callsDropped} call_dropped` : '',
     stats.pinned > 0 ? `${stats.pinned} pinned` : '',
   ].filter(Boolean);

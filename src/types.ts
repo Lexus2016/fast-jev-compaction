@@ -54,13 +54,18 @@ export interface CallAnswer {
   keepResult: number;
 }
 
-export type CallAction = 'keep' | 'drop_result' | 'drop_call';
+/**
+ * `drop_result` cuts the output to a head and a note; `stub_call` keeps the
+ * call whole and replaces its output with a note (an error keeps its head);
+ * `drop_call` (only with `dropCalls`) removes the call and its output.
+ */
+export type CallAction = 'keep' | 'drop_result' | 'stub_call' | 'drop_call';
 
 export interface CallDecision extends CallAnswer {
   id: string;
   tool: string;
   action: CallAction;
-  reason: 'pinned' | 'kept' | 'result_dropped' | 'call_dropped';
+  reason: 'pinned' | 'kept' | 'result_dropped' | 'call_stubbed' | 'call_dropped';
 }
 
 export interface HistoryToolCall {
@@ -105,6 +110,14 @@ export interface CompactOptions {
   maxRequestTokens?: number;
   /** Characters of a dropped tool result to retain. Default 300. */
   truncateHeadChars?: number;
+  /**
+   * What becomes of a call Jev rates as no longer needed, together with its
+   * output. `false` (default): the call stays whole and its output becomes a
+   * one-line note, so the history still shows every call the assistant made.
+   * `true`: the call and its output are removed, leaving no trace (upstream
+   * behaviour; after it a model has narrated work it never did, upstream #65).
+   */
+  dropCalls?: boolean;
 }
 
 export interface ResolvedCompactOptions {
@@ -114,6 +127,7 @@ export interface ResolvedCompactOptions {
   maxStateTokens: number;
   maxRequestTokens: number;
   truncateHeadChars: number;
+  dropCalls: boolean;
 }
 
 export interface CompactResult {
@@ -129,6 +143,7 @@ export interface CompactResult {
     kept: number;
     resultsDropped: number;
     callsDropped: number;
+    callsStubbed: number;
     pinned: number;
     stateTokens: number;
     /** Which fitting stage the state needed, '' when no request was made. */

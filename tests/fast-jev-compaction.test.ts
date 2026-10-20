@@ -288,10 +288,16 @@ describe('decisions', () => {
   const options = { keepThreshold: 0.5 };
   const unpinned = { id: 't1', tool: 'Read', pinned: false };
 
-  it('keeps, drops the result, or drops the call based on the keep probabilities', () => {
+  it('keeps, drops the result, or stubs the call based on the keep probabilities', () => {
     expect(decideCall(unpinned, { keepCall: 0.9, keepResult: 0.7 }, options).action).toBe('keep');
     expect(decideCall(unpinned, { keepCall: 0.9, keepResult: 0.2 }, options).action).toBe('drop_result');
-    expect(decideCall(unpinned, { keepCall: 0.1, keepResult: 0.2 }, options).action).toBe('drop_call');
+    expect(decideCall(unpinned, { keepCall: 0.1, keepResult: 0.2 }, options)).toMatchObject({
+      action: 'stub_call',
+      reason: 'call_stubbed',
+    });
+    expect(
+      decideCall(unpinned, { keepCall: 0.1, keepResult: 0.2 }, { ...options, dropCalls: true }).action,
+    ).toBe('drop_call');
     expect(decideCall({ ...unpinned, pinned: true }, { keepCall: 0, keepResult: 0 }, options)).toMatchObject({
       action: 'keep',
       reason: 'pinned',
@@ -304,7 +310,7 @@ describe('decisions', () => {
     messages[5]!.toolResults![0]!.text = 'x'.repeat(2000);
     const calls = collectToolCalls(messages, 0);
     const decisions = [
-      decideCall(calls[0]!, { keepCall: 0.1, keepResult: 0.1 }, options),
+      decideCall(calls[0]!, { keepCall: 0.1, keepResult: 0.1 }, { ...options, dropCalls: true }),
       decideCall(calls[1]!, { keepCall: 0.9, keepResult: 0.1 }, options),
       decideCall(calls[2]!, { keepCall: 0.9, keepResult: 0.9 }, options),
     ];
@@ -321,14 +327,11 @@ describe('decisions', () => {
       'go ahead',
     ]);
     expect(kept[0]).toBe(messages[0]);
-    expect(kept[2]).not.toBe(messages[4]);
-    expect(kept[2]?.toolUses[0]?.text).toMatch(
-      new RegExp(`^${'x'.repeat(300)}\\n\\[fast-jev-compaction truncated 1700 chars`),
-    );
+    // The call message stays the engine's own: only the result message is rebuilt (#137).
+    expect(kept[2]).toBe(messages[4]);
     expect(kept[3]?.toolResults?.[0]?.text).toMatch(
       new RegExp(`^${'x'.repeat(300)}\\n\\[fast-jev-compaction truncated 1700 chars`),
     );
-    expect(kept[2]).not.toBe(messages[4]);
     expect(kept[3]).not.toBe(messages[5]);
     expect(kept[4]).toBe(messages[6]);
     expect(kept[5]?.toolResults?.[0]?.text).toContain('expected 2 to be 3');
@@ -352,7 +355,7 @@ describe('decisions', () => {
     expect(kept[2]?.toolResults?.[0]?.text).toBe(
       `${original.slice(0, 50)}\n[fast-jev-compaction truncated ${total - 50} chars of this tool result; re-run the tool if needed]`,
     );
-    expect(kept[1]?.toolUses[0]?.text).toBe(kept[2]?.toolResults?.[0]?.text);
+    expect(kept[1]).toBe(messages[1]);
 
     const noHead = applyDecisions(messages, decisions, calls, 0);
     expect(noHead[2]?.toolResults?.[0]?.text).toBe(
@@ -371,7 +374,7 @@ describe('decisions', () => {
       const calls = collectToolCalls(messages, 0);
       const decisions = [decideCall(calls[0]!, { keepCall: 0.9, keepResult: 0.1 }, { keepThreshold: 0.5 })];
       const kept = applyDecisions(messages, decisions, calls, 300);
-      expect(kept[1]?.toolUses[0]?.text).toBe(kept[2]?.toolResults?.[0]?.text);
+      expect(kept[1]).toBe(messages[1]);
       return kept[2]?.toolResults?.[0]?.text;
     };
 
@@ -380,6 +383,84 @@ describe('decisions', () => {
 
     const aligned = `${'x'.repeat(298)}${emoji.repeat(200)}`;
     expect(truncated(aligned)).toBe(`${'x'.repeat(298)}${emoji}\n${note(aligned.length - 300)}`);
+  });
+});
+
+describe('stubbed calls and parallel responses', () => {
+  const options = { keepThreshold: 0.5 };
+  const stub = { keepCall: 0.1, keepResult: 0.1 };
+  const note = (chars: number): string =>
+    `[fast-jev-compaction removed the ${chars}-char output of this call; re-run the tool if needed]`;
+
+  it('keeps a stubbed call whole, however long its input, and replaces its output with a note', () => {
+    const script = `cat <<'EOF' > build.sh\n${'echo step\n'.repeat(80)}EOF`;
+    const messages = [
+      message('user', 'Build it.'),
+      call('tool-1', 'Bash', { command: script, description: 'write the build script' }, 'ok'),
+      result('tool-1', 'written\n'.repeat(100)),
+      message('assistant', 'Done.'),
+    ];
+    const calls = collectToolCalls(messages, 0);
+    const kept = applyDecisions(messages, [decideCall(calls[0]!, stub, options)], calls, 300);
+    expect(kept).toHaveLength(4);
+    expect(kept[1]).toBe(messages[1]);
+    expect(kept[2]!.toolResults![0]!.text).toBe(note(800));
+    expect(kept[3]).toBe(messages[3]);
+  });
+
+  it('leaves a short output a stub would replace as it is', () => {
+    const messages = [
+      message('user', 'Count it.'),
+      call('tool-1', 'Bash', { command: 'wc -c f' }, '  42'),
+      result('tool-1', '  42'),
+    ];
+    const calls = collectToolCalls(messages, 0);
+    const kept = applyDecisions(messages, [decideCall(calls[0]!, stub, options)], calls, 300);
+    kept.forEach((m, i) => expect(m).toBe(messages[i]));
+  });
+
+  it('keeps a stubbed call whole when its input is already short, rewriting only the result', () => {
+    const messages = transcript();
+    const calls = collectToolCalls(messages, 0);
+    const kept = applyDecisions(messages, [decideCall(calls[0]!, stub, options)], calls, 300);
+    expect(kept[1]).toBe(messages[1]);
+    expect(kept[2]!.toolResults![0]!.text).toBe(note(fileA.length));
+  });
+
+  it('keeps the head of an error a stub replaces', () => {
+    const messages = transcript();
+    messages[7]!.toolResults![0]!.text = `Error: ENOENT src/missing.ts\n${'  at frame\n'.repeat(80)}`;
+    const calls = collectToolCalls(messages, 0);
+    const kept = applyDecisions(messages, [decideCall(calls[2]!, stub, options)], calls, 40);
+    expect(kept[7]!.toolResults![0]!.text).toMatch(
+      /^Error: ENOENT src\/missing\.ts\n.*\n\[fast-jev-compaction truncated \d+ chars of this tool result \(error\)/s,
+    );
+  });
+
+  it('never rebuilds a call message of a parallel response, stub or dropped result', () => {
+    const long = 'z'.repeat(2000);
+    const messages = [
+      message('user', 'Read all three.'),
+      call('p-1', 'Bash', { command: long }, long),
+      call('p-2', 'Read', { file_path: 'b.ts' }, long),
+      call('p-3', 'Read', { file_path: 'c.ts' }, long),
+      result('p-1', long),
+      result('p-2', long),
+      result('p-3', long),
+      message('assistant', 'Read them.'),
+    ];
+    const calls = collectToolCalls(messages, 0);
+    const decisions = [
+      decideCall(calls[0]!, stub, options),
+      decideCall(calls[1]!, { keepCall: 0.9, keepResult: 0.1 }, options),
+      decideCall(calls[2]!, { keepCall: 0.9, keepResult: 0.9 }, options),
+    ];
+    const kept = applyDecisions(messages, decisions, calls, 300);
+    expect(kept).toHaveLength(messages.length);
+    for (const index of [1, 2, 3]) expect(kept[index]).toBe(messages[index]);
+    expect(kept[4]!.toolResults![0]!.text).toBe(note(2000));
+    expect(kept[5]!.toolResults![0]!.text).toMatch(/\[fast-jev-compaction truncated 1700 chars/);
+    expect(kept[6]).toBe(messages[6]);
   });
 });
 

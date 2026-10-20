@@ -11,6 +11,7 @@ import type {
   Message,
   ResolvedCompactOptions,
   ToolCall,
+  ToolResult,
   ToolUse,
 } from './types.js';
 
@@ -21,6 +22,7 @@ export const DEFAULT_OPTIONS: ResolvedCompactOptions = {
   maxStateTokens: 25_000,
   maxRequestTokens: 30_000,
   truncateHeadChars: 300,
+  dropCalls: false,
 };
 
 /** Tokens the request envelope (`model`, key names) adds around state and questions. */
@@ -52,6 +54,8 @@ export function resolveOptions(options: CompactOptions = {}): ResolvedCompactOpt
       0,
       Math.floor(finite(options.truncateHeadChars, DEFAULT_OPTIONS.truncateHeadChars)),
     ),
+    dropCalls:
+      typeof options.dropCalls === 'boolean' ? options.dropCalls : DEFAULT_OPTIONS.dropCalls,
   };
 }
 
@@ -108,7 +112,8 @@ export function batchCalls(
 export function decideCall(
   call: Pick<ToolCall, 'id' | 'tool' | 'pinned'>,
   answer: CallAnswer,
-  options: Pick<ResolvedCompactOptions, 'keepThreshold'>,
+  options: Pick<ResolvedCompactOptions, 'keepThreshold'> &
+    Partial<Pick<ResolvedCompactOptions, 'dropCalls'>>,
 ): CallDecision {
   const base = { id: call.id, tool: call.tool, ...answer };
   if (call.pinned) return { ...base, action: 'keep', reason: 'pinned' };
@@ -118,7 +123,8 @@ export function decideCall(
   if (answer.keepCall >= options.keepThreshold) {
     return { ...base, action: 'drop_result', reason: 'result_dropped' };
   }
-  return { ...base, action: 'drop_call', reason: 'call_dropped' };
+  if (options.dropCalls) return { ...base, action: 'drop_call', reason: 'call_dropped' };
+  return { ...base, action: 'stub_call', reason: 'call_stubbed' };
 }
 
 async function askBatch(
@@ -158,10 +164,30 @@ function truncatedResultText(text: string, isError: boolean, headChars: number):
 }
 
 /**
- * Rebuilds the conversation from the decisions. A dropped call disappears
- * together with its result; a dropped result keeps a bounded head and note.
- * Messages that lose all their content are removed; untouched messages are
- * returned as the same objects they came in as.
+ * The result of a stubbed call: a one-line note in place of the output, so
+ * the call stays answered and the history says what became of its output. An
+ * error keeps its head, since the exact error text is what is worth keeping.
+ */
+function stubResultText(text: string, isError: boolean, headChars: number): string {
+  if (isError) return truncatedResultText(text, true, headChars);
+  const note = `[fast-jev-compaction removed the ${text.length}-char output of this call; re-run the tool if needed]`;
+  return text.length <= note.length ? text : note;
+}
+
+/**
+ * Rebuilds the conversation from the decisions. A dropped result keeps a
+ * bounded head and note; a stubbed call keeps its call whole and its output
+ * becomes a note; with `dropCalls` a call is removed together with its result
+ * instead. Messages that lose all their content are removed; untouched
+ * messages are returned as the same objects they came in as.
+ *
+ * Only tool_result messages are rewritten; a message holding a call is kept
+ * as it was or, with `dropCalls`, loses that call. Claude Code builds a
+ * message handed back without its handle as a new API message, so a rebuilt
+ * call message splits a parallel response and the host reports the other
+ * calls' results as missing (upstream #137). And a call is never shortened:
+ * live, a model read a cut command as the command it had run, even with a
+ * note saying otherwise.
  */
 export function applyDecisions(
   messages: readonly Message[],
@@ -175,67 +201,52 @@ export function applyDecisions(
     const call = byId.get(decision.id);
     if (call && decision.action !== 'keep') actions.set(call.tool_use_id, decision.action);
   }
+  if (actions.size === 0) return [...messages];
+
+  const rewriteUses = (tools: ToolUse[]): ToolUse[] =>
+    tools.some((tool) => actions.get(tool.tool_use_id) === 'drop_call')
+      ? tools.filter((tool) => actions.get(tool.tool_use_id) !== 'drop_call')
+      : tools;
+
+  const rewriteResults = (results: ToolResult[]): ToolResult[] => {
+    let changed = false;
+    const out: ToolResult[] = [];
+    for (const result of results) {
+      const action = actions.get(result.tool_use_id);
+      if (action === 'drop_call') {
+        changed = true;
+        continue;
+      }
+      const isError = result.isError ?? false;
+      const text =
+        action === 'drop_result'
+          ? truncatedResultText(result.text, isError, headChars)
+          : action === 'stub_call'
+            ? stubResultText(result.text, isError, headChars)
+            : result.text;
+      if (text === result.text) {
+        out.push(result);
+        continue;
+      }
+      out.push({ tool_use_id: result.tool_use_id, text, isError: result.isError });
+      changed = true;
+    }
+    return changed ? out : results;
+  };
+
   const kept: Message[] = [];
   for (const message of messages) {
-    const touched =
-      message.toolUses.some((tool) => actions.has(tool.tool_use_id)) ||
-      (message.toolResults ?? []).some((result) => actions.has(result.tool_use_id));
-    if (!touched) {
+    const toolUses = rewriteUses(message.toolUses);
+    const toolResults = message.toolResults && rewriteResults(message.toolResults);
+    if (toolUses === message.toolUses && toolResults === message.toolResults) {
       kept.push(message);
       continue;
     }
-    const toolUses = message.toolUses
-      .filter((tool) => actions.get(tool.tool_use_id) !== 'drop_call')
-      .map((tool) => {
-        if (actions.get(tool.tool_use_id) !== 'drop_result') return tool;
-        const text = truncatedResultText(
-          tool.text ?? '',
-          tool.isError ?? false,
-          headChars,
-        );
-        if ((tool.text ?? '') === text) return tool;
-        const copy: ToolUse = {
-          tool_use_id: tool.tool_use_id,
-          tool: tool.tool,
-          input: tool.input,
-          text,
-        };
-        if (tool.isError) copy.isError = true;
-        return copy;
-      });
-    const toolResults = (message.toolResults ?? [])
-      .filter((result) => actions.get(result.tool_use_id) !== 'drop_call')
-      .map((result) => {
-        if (actions.get(result.tool_use_id) !== 'drop_result') return result;
-        const text = truncatedResultText(result.text, result.isError ?? false, headChars);
-        return text === result.text
-          ? result
-          : {
-              tool_use_id: result.tool_use_id,
-              text,
-              isError: result.isError,
-            };
-      });
-    if (
-      !message.toolUses.some(
-        (tool) => actions.get(tool.tool_use_id) === 'drop_call',
-      ) &&
-      !(message.toolResults ?? []).some(
-        (result) => actions.get(result.tool_use_id) === 'drop_call',
-      ) &&
-      toolUses.every((tool, index) => tool === message.toolUses[index]) &&
-      toolResults.every(
-        (result, index) => result === message.toolResults?.[index],
-      )
-    ) {
-      kept.push(message);
-      continue;
-    }
-    if (message.text.trim().length === 0 && toolUses.length === 0 && toolResults.length === 0) {
+    if (message.text.trim().length === 0 && toolUses.length === 0 && !toolResults?.length) {
       continue;
     }
     const rebuilt: Message = { role: message.role, text: message.text, toolUses };
-    if (toolResults.length > 0) rebuilt.toolResults = toolResults;
+    if (toolResults && toolResults.length > 0) rebuilt.toolResults = toolResults;
     kept.push(rebuilt);
   }
   return kept;
@@ -316,6 +327,7 @@ export async function compact(
       kept: count(decisions, 'kept'),
       resultsDropped: count(decisions, 'result_dropped'),
       callsDropped: count(decisions, 'call_dropped'),
+      callsStubbed: count(decisions, 'call_stubbed'),
       pinned: count(decisions, 'pinned'),
       stateTokens: fitted.tokens,
       stateStage: fitted.stage,
