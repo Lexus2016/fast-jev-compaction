@@ -486,3 +486,47 @@ describe('session.compact catch handler', () => {
     expect(await caught('manual', 'throw', { builtinFallback: 'always' }).result).toEqual({ messages: [] });
   });
 });
+
+describe('auto compaction when stubs do not free enough', () => {
+  const content = 'line of a written file\n'.repeat(200);
+  const heavy = (): SessionMessage[] => [
+    message('user', 'Write it.', { handle: 'h-0' }),
+    call('w-1', 'Write', { file_path: 'a.txt', content }, 'ok'),
+    result('w-1', 'File created successfully at: a.txt'),
+    message('assistant', 'Written.', { handle: 'h-3' }),
+    message('user', 'next', { handle: 'h-4' }),
+  ];
+  async function run(trigger: string) {
+    const notices: string[] = [];
+    const host = {
+      env: { get: async (name: string) => (name === 'TYPESAFE_API_KEY' ? 'k' : undefined) },
+      settings: { read: async () => ({}) },
+      http: { fetch: jevFetch(() => 0.1) },
+      ui: { log: (text: string) => notices.push(text), toast: () => {} },
+      clock: { sleep: (_ms: number, { signal }: { signal: AbortSignal }) => new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')))) },
+    };
+    let delegated = false;
+    const out = await registeredHooks({ preserveRecentMessages: 2 }).get('session.compact')!(
+      host,
+      { trigger, messages: heavy() },
+      async () => {
+        delegated = true;
+        return { messages: [] };
+      },
+    );
+    return { out, delegated, notices };
+  }
+
+  it('removes the calls Jev rated unneeded before falling back to the summary', async () => {
+    const { out, delegated, notices } = await run('auto');
+    expect(delegated).toBe(false);
+    expect(out).toMatchObject({ messages: expect.any(Array) });
+    expect(notices.at(-1)).toMatch(/^kept 3\/5 messages, no summary; stubs alone freed \d+%, so 1 unneeded calls were removed/);
+  });
+
+  it('keeps a /compact verbatim instead: stubs only, skipped below the minimum', async () => {
+    const { out, delegated } = await run('manual');
+    expect(delegated).toBe(false);
+    expect(out).toEqual({ skip: expect.stringMatching(/^fast-jev-compaction: below 25% minimum/) });
+  });
+});

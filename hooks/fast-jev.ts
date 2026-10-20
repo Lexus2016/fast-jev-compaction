@@ -8,7 +8,7 @@ import type {
   TurnCompleteInput,
 } from 'claude-code';
 
-import { compact, reductionRatio, resolveOptions } from '../src/compact.js';
+import { compact, dropStubbedCalls, reductionRatio, resolveOptions } from '../src/compact.js';
 import { redactDeep } from '../src/redact.js';
 import { buildJevRequest, DEFAULT_MODEL, parseJevResponse } from '../src/request.js';
 import type {
@@ -408,6 +408,20 @@ export const register: Register = (on: On, options: PluginOptions) => {
       if (redacted > 0) $.ui.log(`redacted ${redacted} secret-shaped value(s) from the Jev request`);
       if (config.logDecisions) for (const line of decisionLogLines(result)) $.ui.log(line);
       if (reductionRatio(result) < config.minReductionRatio) {
+        // The engine's own compaction must shrink the conversation. Before an LLM
+        // summary, remove the calls Jev already rated unneeded instead of keeping
+        // them as stubs: no new request, and everything kept stays verbatim.
+        if (event.trigger === 'auto' && result.stats.callsStubbed > 0) {
+          const dropped = dropStubbedCalls(event.messages, result, config);
+          if (reductionRatio(dropped) >= config.minReductionRatio) {
+            const kept = toSessionMessages(event.messages, dropped.messages);
+            notify(
+              $,
+              `kept ${kept.length}/${event.messages.length} messages, no summary; stubs alone freed ${percent(reductionRatio(result))}, so ${result.stats.callsStubbed} unneeded calls were removed (${summarize(dropped)})`,
+            );
+            return { messages: kept };
+          }
+        }
         return giveUp(`below ${percent(config.minReductionRatio)} minimum: ${summarize(result)}`);
       }
       notify(

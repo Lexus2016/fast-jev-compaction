@@ -7,6 +7,7 @@ import {
   compact,
   compactMessages,
   decideCall,
+  dropStubbedCalls,
   estimateTokens,
   fitState,
   HistoryTooLargeError,
@@ -410,6 +411,18 @@ describe('stubbed calls and parallel responses', () => {
     expect(kept[3]).toBe(messages[3]);
   });
 
+  it('keeps an output no longer than a truncated head verbatim, and replaces a longer one', () => {
+    const at = (chars: number) => {
+      const out = 'r'.repeat(chars);
+      const messages = [message('user', 'go'), call('tool-1', 'Bash', { command: 'run' }, out), result('tool-1', out)];
+      const calls = collectToolCalls(messages, 0);
+      return applyDecisions(messages, [decideCall(calls[0]!, stub, options)], calls, 300)[2]!.toolResults![0]!.text;
+    };
+    expect(at(420)).toBe('r'.repeat(420));
+    expect(at(421)).toBe(note(421));
+    expect(at(150)).toBe('r'.repeat(150));
+  });
+
   it('leaves a short output a stub would replace as it is', () => {
     const messages = [
       message('user', 'Count it.'),
@@ -743,5 +756,34 @@ describe('repeated compaction', () => {
     expect(note(`Error: boom\n${'z'.repeat(2000)}`, true)).toBe(true);
     const plain = [message('user', 'go'), call('x', 'Bash', {}, 'ok'), result('x', 'ok; re-run the tool if needed]'), message('user', 'n')];
     expect(collectToolCalls(plain, 0)[0]!.settled).toBe(false);
+  });
+});
+
+describe('dropping the stubs when they do not free enough', () => {
+  it('applies the same answers with stubbed calls removed, and recounts', async () => {
+    const content = 'line of a written file\n'.repeat(200);
+    const messages = [
+      message('user', 'Write the files.'),
+      call('w-1', 'Write', { file_path: 'a.txt', content }, 'File created'),
+      result('w-1', 'File created successfully at: a.txt'),
+      call('w-2', 'Read', { file_path: 'b.txt' }, fileA),
+      result('w-2', fileA),
+      message('assistant', 'Both done.'),
+      message('user', 'thanks'),
+    ];
+    const stubbed = await compact(messages, fakeJev((name) => (name.endsWith('_t2') ? 0.9 : 0.1)), {
+      preserveRecentMessages: 2,
+    });
+    expect(stubbed.stats.callsStubbed).toBe(1);
+    expect(reductionRatio(stubbed)).toBeLessThan(0.05);
+
+    const dropped = dropStubbedCalls(messages, stubbed, { preserveRecentMessages: 2 });
+    expect(dropped.stats.callsStubbed).toBe(0);
+    expect(dropped.stats.callsDropped).toBe(1);
+    expect(dropped.decisions.map((d) => d.action)).toEqual(['drop_call', 'keep']);
+    expect(dropped.messages.some((m) => m.toolUses.some((t) => t.tool_use_id === 'w-1'))).toBe(false);
+    expect(dropped.messages.some((m) => m.toolResults?.some((r) => r.tool_use_id === 'w-1'))).toBe(false);
+    expect(reductionRatio(dropped)).toBeGreaterThan(0.5);
+    expect(dropStubbedCalls(messages, dropped, { preserveRecentMessages: 2 })).toBe(dropped);
   });
 });

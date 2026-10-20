@@ -174,12 +174,13 @@ function truncatedResultText(text: string, isError: boolean, headChars: number):
 /**
  * The result of a stubbed call: a one-line note in place of the output, so
  * the call stays answered and the history says what became of its output. An
- * error keeps its head, since the exact error text is what is worth keeping.
+ * error keeps its head, since the exact error text is what is worth keeping,
+ * and an output no longer than a truncated head (`headChars` + 120) stays as
+ * it is: a short output is usually the fact itself (a count, an id, a status).
  */
 function stubResultText(text: string, isError: boolean, headChars: number): string {
-  if (isError) return truncatedResultText(text, true, headChars);
-  const note = `[fast-jev-compaction removed the ${text.length}-char output of this call; re-run the tool if needed]`;
-  return text.length <= note.length ? text : note;
+  if (isError || text.length <= headChars + 120) return truncatedResultText(text, isError, headChars);
+  return `[fast-jev-compaction removed the ${text.length}-char output of this call; re-run the tool if needed]`;
 }
 
 /**
@@ -277,6 +278,42 @@ export function messageChars(message: Message): number {
 export function reductionRatio(result: Pick<CompactResult, 'stats'>): number {
   const { charsBefore, charsAfter } = result.stats;
   return charsBefore === 0 ? 0 : (charsBefore - charsAfter) / charsBefore;
+}
+
+/**
+ * The same compaction with every stubbed call removed together with its
+ * result, as `dropCalls` would have done: no new Jev request, the same
+ * answers applied the upstream way. For when a compaction must shrink the
+ * conversation and the stubs alone do not free enough; erasing calls Jev
+ * already rated unneeded keeps the rest verbatim, where the alternative is an
+ * LLM summary. `messages` and `options` must be the ones `result` came from.
+ */
+export function dropStubbedCalls(
+  messages: readonly Message[],
+  result: CompactResult,
+  options: CompactOptions = {},
+): CompactResult {
+  if (result.stats.callsStubbed === 0) return result;
+  const resolved = resolveOptions(options);
+  const calls = collectToolCalls(messages, resolved.preserveRecentMessages);
+  const decisions = result.decisions.map(
+    (decision): CallDecision =>
+      decision.action === 'stub_call'
+        ? { ...decision, action: 'drop_call', reason: 'call_dropped' }
+        : decision,
+  );
+  const kept = applyDecisions(messages, decisions, calls, resolved.truncateHeadChars);
+  return {
+    messages: kept,
+    decisions,
+    stats: {
+      ...result.stats,
+      messagesAfter: kept.length,
+      charsAfter: kept.reduce((sum, message) => sum + messageChars(message), 0),
+      callsDropped: count(decisions, 'call_dropped'),
+      callsStubbed: 0,
+    },
+  };
 }
 
 function count(decisions: readonly CallDecision[], reason: CallDecision['reason']): number {
