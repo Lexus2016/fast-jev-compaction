@@ -418,6 +418,17 @@ export const register: Register = (on: On, options: PluginOptions) => {
     } catch (error) {
       return giveUp(error instanceof Error ? error.message : String(error));
     }
+  }).catch(($, event, next) => {
+    // The hook threw past its own guard or overran the host's budget. Without
+    // this handler the hook would count as absent and every trigger would get
+    // the built-in summary; the same policy as a Jev failure applies instead.
+    const why = `hook ${next.error.kind}${next.error.message ? `: ${next.error.message.slice(0, 160)}` : ''}`;
+    if (mayUseBuiltin(event.trigger, configured.builtinFallback)) {
+      $.ui.log(`fallback to built-in summary (${why})`);
+      return next(event);
+    }
+    $.ui.log(`not compacted, no built-in summary (${why})`);
+    return { skip: `fast-jev-compaction: ${why}; conversation left unchanged` };
   });
 
   on('turn.complete', async ($, event: TurnCompleteInput, next) => {

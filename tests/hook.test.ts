@@ -37,7 +37,7 @@ function registeredHooks(options: Record<string, unknown> = {}): Map<string, Hoo
   const handlers = new Map<string, HookHandler>();
   const on = ((name: string, ...args: unknown[]) => {
     handlers.set(name, args.at(-1) as HookHandler);
-    return {};
+    return { catch: (handler: HookHandler) => handlers.set(`catch:${name}`, handler) };
   }) as never;
   register(on, options as never);
   return handlers;
@@ -459,5 +459,30 @@ describe('turn.complete request after a skip', () => {
     const { state, turn } = driver();
     for (const percent of [61, 65, 30, 61]) await turn(percent);
     expect(state.requested).toEqual([61, 61]);
+  });
+});
+
+describe('session.compact catch handler', () => {
+  function caught(trigger: string, kind: 'throw' | 'timeout', options: Record<string, unknown> = {}) {
+    const handler = registeredHooks(options).get('catch:session.compact')!;
+    const logs: string[] = [];
+    const next = Object.assign(vi.fn(async () => ({ messages: [] })), {
+      error: { kind, message: 'boom', budget: 30_000 },
+      called: false,
+    });
+    return { result: handler({ ui: { log: (t: string) => logs.push(t) } }, { trigger, messages: [] }, next), next, logs };
+  }
+
+  it('applies the fallback policy when the hook throws or overruns', async () => {
+    const manual = caught('manual', 'timeout');
+    expect(await manual.result).toEqual({ skip: 'fast-jev-compaction: hook timeout: boom; conversation left unchanged' });
+    expect(manual.next).not.toHaveBeenCalled();
+    expect(manual.logs).toEqual(['not compacted, no built-in summary (hook timeout: boom)']);
+
+    const auto = caught('auto', 'throw');
+    expect(await auto.result).toEqual({ messages: [] });
+    expect(auto.next).toHaveBeenCalledOnce();
+
+    expect(await caught('manual', 'throw', { builtinFallback: 'always' }).result).toEqual({ messages: [] });
   });
 });
