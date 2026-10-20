@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { jevAsker } from '../hooks/fast-jev.js';
+import { JevClient } from '../src/client.js';
 import { REDACTED, redactDeep, redactSecrets } from '../src/redact.js';
 import type { JevQuestions } from '../src/types.js';
 
@@ -217,6 +218,33 @@ const SERVICE_TOKENS = {
   replicate: j('r', '8_', 'AbCd1234'.repeat(4)),
   databricks: j('da', 'pi', '0123456789abcdef'.repeat(2)),
 };
+
+describe('JevClient (the library path)', () => {
+  it('redacts the request the way the hook does and keeps the key in the header only', async () => {
+    const key = j('lib-', 'key-123456789');
+    let body = '';
+    let auth = '';
+    const fake: typeof fetch = async (_input, init) => {
+      body = typeof init?.body === 'string' ? init.body : '';
+      auth = new Headers(init?.headers).get('authorization') ?? '';
+      return new Response(JSON.stringify({ answers: {} }));
+    };
+    const client = new JevClient({ apiKey: key, fetch: fake, known: [j('known', '-value-42')] });
+    await client.ask(
+      { goal: `use ${SECRETS.github} and ${key} and ${j('known', '-value-42')}` },
+      { call_t1: { type: 'noul', instructions: `SMTP_PASS=${j('abc', '12345')}` } },
+    );
+    for (const leak of [SECRETS.github, key, j('known', '-value-42'), 'abc12345']) expect(body).not.toContain(leak);
+    expect(auth).toBe(`Bearer ${key}`);
+  });
+
+  it('gives up on a request that outlives timeoutMs', async () => {
+    const hanging: typeof fetch = (_input, init) =>
+      new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+    const client = new JevClient({ apiKey: 'k'.repeat(16), fetch: hanging, timeoutMs: 20 });
+    await expect(client.ask({ goal: 'g' }, {})).rejects.toThrow();
+  });
+});
 
 describe('redaction gaps found in the 0.4.1 audit', () => {
   it.each(Object.entries(SERVICE_TOKENS))('removes a %s token in prose and in a serialised tool input', (_name, token) => {

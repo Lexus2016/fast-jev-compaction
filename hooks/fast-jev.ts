@@ -8,14 +8,12 @@ import type {
   TurnCompleteInput,
 } from 'claude-code';
 
+import { jevAsker, type JevFetch, type JevFetchInit, type JevFetchResponse } from '../src/asker.js';
 import { compact, dropStubbedCalls, reductionRatio, resolveOptions } from '../src/compact.js';
-import { redactDeep } from '../src/redact.js';
-import { buildJevRequest, DEFAULT_MODEL, parseJevResponse } from '../src/request.js';
+import { DEFAULT_MODEL } from '../src/request.js';
 import type {
   CompactOptions,
   CompactResult,
-  JevAsker,
-  JevState,
   Message,
   ToolResult,
   ToolUse,
@@ -46,20 +44,10 @@ const HOOK_DEFAULTS = {
  */
 const RETRY_AFTER_SKIP_PERCENT = 10;
 
-export type HookFetchInit = {
-  method?: string;
-  headers?: Record<string, string>;
-  body?: string;
-};
-
-export type HookFetchResponse = {
-  status: number;
-  ok: boolean;
-  text: string;
-};
-
+export type HookFetchInit = JevFetchInit;
+export type HookFetchResponse = JevFetchResponse;
 /** The shape of `$.http.fetch`, so the hook can be driven without an engine. */
-export type HookFetch = (url: string, init?: HookFetchInit) => Promise<HookFetchResponse>;
+export type HookFetch = JevFetch;
 
 export type HookConfig = CompactOptions & {
   apiKey?: string;
@@ -140,42 +128,8 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   return config;
 }
 
-/**
- * A `JevAsker` over the engine's `$.http.fetch`. Secrets are redacted from what
- * is sent (`onRedact` gets the count). The batches of one compaction share a
- * state object (one per window in a long session), so each state is redacted
- * once, not once per batch.
- */
-export function jevAsker(
-  fetchFn: HookFetch,
-  apiKey: string,
-  model: string,
-  onRedact: (count: number) => void = () => {},
-): JevAsker {
-  const redacted = new WeakMap<object, JevState>();
-  const redactState = (state: JevState): JevState => {
-    const cached = typeof state === 'object' ? redacted.get(state) : undefined;
-    if (cached !== undefined) return cached;
-    const safe = redactDeep(state, [apiKey]);
-    if (typeof state === 'object') redacted.set(state, safe.value);
-    onRedact(safe.count);
-    return safe.value;
-  };
-  return {
-    async ask(state, questions) {
-      const safeState = redactState(state);
-      const safeQuestions = redactDeep(questions, [apiKey]);
-      if (safeQuestions.count > 0) onRedact(safeQuestions.count);
-      const request = buildJevRequest({ apiKey, model }, safeState, safeQuestions.value);
-      const response = await fetchFn(request.url, {
-        method: request.method,
-        headers: request.headers,
-        body: request.body,
-      });
-      return parseJevResponse(response.status, response.ok, response.text);
-    },
-  };
-}
+/** The redacting asker, shared with the library's `JevClient` (`src/asker.ts`). */
+export { jevAsker };
 
 function toolUseSummary(tool: ToolUse): ToolUseSummary {
   const summary: ToolUseSummary = {
