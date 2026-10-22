@@ -81,14 +81,16 @@ straight to the library; see the root README for what they do. Subagent and
 fork compactions (`agentId`) go to the next handler untouched, and a
 `precompute` is skipped. If Jev fails, the response is malformed, the key is
 unavailable, or the estimated reduction is below `minReductionRatio`, what
-happens next depends on the compaction's `trigger`. With `builtinFallback` at
-`auto`, only Claude Code's own compaction (`auto`: its threshold, or a prompt
-too long, when the conversation has to shrink) goes further: if its stubs alone
-free too little, the same answers are applied with the stubbed calls removed
-(no new Jev request) and installed if that clears the minimum; otherwise it
-logs a fallback and delegates to Claude Code's built-in compaction; `/compact` (`manual`) and a plugin's request
-(`plugin`, including this plugin's `turn.complete` one) answer `{ skip }`
-instead, so the conversation stays as it is and Claude Code shows why.
+happens next depends on the compaction's `trigger`. On every trigger, if the
+stubs alone free too little, the same answers are applied with the stubbed
+calls removed (no new Jev request) and installed if that clears the minimum.
+If it still does not, with `builtinFallback` at `auto` only Claude Code's own
+compaction (`auto`: its threshold, or a prompt too long, when the conversation
+has to shrink) logs a fallback and delegates to Claude Code's built-in
+compaction; `/compact` (`manual`) and a plugin's request (`plugin`, including
+this plugin's `turn.complete` one) answer `{ skip }` instead, so the
+conversation stays as it is and Claude Code shows why, with what removing the
+calls would have freed.
 `always` delegates on every trigger, as upstream did; `never` on none. The
 outcome is shown as a toast and logged as one line with the reduction only.
 Setting `logDecisions` adds the per-reason counts, state size and request

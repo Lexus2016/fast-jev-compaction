@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.1 — 2026-10-22
+
+- `/compact` and the plugin's own `turn.complete` request now also erase the
+  calls Jev rated unneeded (no new request) when the stubs alone free less
+  than `minReductionRatio`; before, only Claude Code's own automatic
+  compaction did. In a long UGC session the stubs freed 9–16% on every manual
+  and plugin round, which were all skipped ("below 25% minimum"), while the
+  automatic round that could erase calls went from 14% to 64% (784k → 208k
+  tokens, no summary). Still no built-in summary for these triggers: if the
+  removal also frees too little they answer `{ skip }` as before.
+- A skip or fallback below the minimum now says what erasing the unneeded
+  calls would have freed (`… 16% reduction; 21% with the unneeded calls
+  removed`), so a refusal shows the best figure that was reachable.
+
 ## 0.5.0 — 2026-10-20
 
 Fixes from the audit of 0.4.1; details and evidence in

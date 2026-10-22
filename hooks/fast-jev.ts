@@ -430,10 +430,12 @@ export const register: Register = (on: On, options: PluginOptions) => {
         for (const line of decisionLogLines(result)) $.ui.log(line);
       }
       if (reductionRatio(result) < config.minReductionRatio) {
-        // The engine's own compaction must shrink the conversation. Before an LLM
+        // Before giving up, or, for the engine's own compaction, before an LLM
         // summary, remove the calls Jev already rated unneeded instead of keeping
-        // them as stubs: no new request, and everything kept stays verbatim.
-        if (event.trigger === 'auto' && result.stats.callsStubbed > 0) {
+        // them as stubs: no new request, and everything kept stays verbatim. On
+        // a long session the stubs alone free little, the removal most of it.
+        let shortfall = detail(result);
+        if (result.stats.callsStubbed > 0) {
           const dropped = dropStubbedCalls(event.messages, result, config);
           if (reductionRatio(dropped) >= config.minReductionRatio) {
             const kept = toSessionMessages(event.messages, dropped.messages);
@@ -443,8 +445,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
             );
             return { messages: kept };
           }
+          shortfall += `; ${percent(reductionRatio(dropped))} with the unneeded calls removed`;
         }
-        return giveUp(`below ${percent(config.minReductionRatio)} minimum: ${detail(result)}`);
+        return giveUp(`below ${percent(config.minReductionRatio)} minimum: ${shortfall}`);
       }
       notify(
         $,

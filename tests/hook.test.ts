@@ -598,7 +598,7 @@ describe('session.compact catch handler', () => {
   });
 });
 
-describe('auto compaction when stubs do not free enough', () => {
+describe('compaction when stubs do not free enough', () => {
   const content = 'line of a written file\n'.repeat(200);
   const heavy = (): SessionMessage[] => [
     message('user', 'Write it.', { handle: 'h-0' }),
@@ -607,7 +607,12 @@ describe('auto compaction when stubs do not free enough', () => {
     message('assistant', 'Written.', { handle: 'h-3' }),
     message('user', 'next', { handle: 'h-4' }),
   ];
-  async function run(trigger: string) {
+  // The same written file inside a long conversation: removing the call frees < 25%.
+  const diluted = (): SessionMessage[] => {
+    const [first, ...rest] = heavy();
+    return [first!, message('assistant', 'long answer. '.repeat(2000), { handle: 'h-long' }), ...rest];
+  };
+  async function run(trigger: string, messages: SessionMessage[] = heavy()) {
     const notices: string[] = [];
     const host = {
       env: { get: async (name: string) => (name === 'TYPESAFE_API_KEY' ? 'k' : undefined) },
@@ -619,7 +624,7 @@ describe('auto compaction when stubs do not free enough', () => {
     let delegated = false;
     const out = await registeredHooks({ preserveRecentMessages: 2 }).get('session.compact')!(
       host,
-      { trigger, messages: heavy() },
+      { trigger, messages },
       async () => {
         delegated = true;
         return { messages: [] };
@@ -635,10 +640,34 @@ describe('auto compaction when stubs do not free enough', () => {
     expect(notices.at(-1)).toMatch(/^kept 3\/5 messages, no summary; stubs alone freed \d+%, so 1 unneeded calls were removed/);
   });
 
-  it('keeps a /compact verbatim instead: stubs only, skipped below the minimum', async () => {
-    const { out, delegated } = await run('manual');
-    expect(delegated).toBe(false);
-    expect(out).toEqual({ skip: expect.stringMatching(/^fast-jev-compaction: below 25% minimum/) });
+  it('removes them for a /compact or a plugin request as well, with no summary', async () => {
+    for (const trigger of ['manual', 'plugin']) {
+      const { out, delegated, notices } = await run(trigger);
+      expect(delegated).toBe(false);
+      expect(out).toMatchObject({ messages: expect.any(Array) });
+      expect(notices.at(-1)).toMatch(/^kept 3\/5 messages, no summary; stubs alone freed \d+%, so 1 unneeded calls were removed/);
+    }
+  });
+
+  it('still leaves a /compact or a plugin request unchanged when removing the calls frees less than the minimum', async () => {
+    for (const trigger of ['manual', 'plugin']) {
+      const { out, delegated, notices } = await run(trigger, diluted());
+      expect(delegated).toBe(false);
+      // The skip says what removing the calls would have freed, so a refusal shows the best reachable figure.
+      expect(out).toEqual({
+        skip: expect.stringMatching(
+          /^fast-jev-compaction: below 25% minimum: \d+% reduction; \d+% with the unneeded calls removed; conversation left unchanged$/,
+        ),
+      });
+      expect(notices.at(-1)).toMatch(/^not compacted, no built-in summary \(below 25% minimum: \d+% reduction; \d+% with the unneeded calls removed\)$/);
+    }
+  });
+
+  it('hands an engine auto compaction to the summary when removing the calls frees too little as well', async () => {
+    const { out, delegated, notices } = await run('auto', diluted());
+    expect(delegated).toBe(true);
+    expect(out).toEqual({ messages: [] });
+    expect(notices.at(-1)).toMatch(/^fallback to built-in summary \(below 25% minimum: \d+% reduction; \d+% with the unneeded calls removed\)$/);
   });
 });
 

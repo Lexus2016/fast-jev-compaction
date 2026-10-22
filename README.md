@@ -189,8 +189,9 @@ stage was needed, and the number of requests.
   cost: shortening them was tried, and a model read the cut input as what it
   had run. On the 26 heaviest local transcripts, stubbing every unpinned call
   frees 21–69% (erasing them, 34–97%). The Claude Code hook therefore erases
-  the calls Jev rated unneeded, with no new request, when Claude Code's own
-  automatic compaction cannot otherwise reach `minReductionRatio`.
+  the calls Jev rated unneeded, with no new request, when the stubs alone
+  cannot reach `minReductionRatio`, on every trigger (`/compact` and the
+  plugin's own request included).
 - Token sizes are estimates from character counts, not a tokenizer.
 - Calibration is at the request level; a probability is not a proof that a
   result is safe to delete. The assistant can re-run a read; every note tells
@@ -237,8 +238,8 @@ The install prompts for the plugin options (API key, thresholds, `truncateHeadCh
 Restart Claude Code or run `/reload-plugins`. From then on `/compact` (and
 auto-compaction) goes through Jev: the toast reads
 `fast-jev-compaction: kept N/M messages, no summary (…)` when the pruned history
-replaced the built-in summary. When Jev could not remove enough (short
-sessions, or when it fails) it reads `fallback to built-in summary (…)` during
+replaced the built-in summary. When Jev could not remove enough, even by
+erasing the calls it rated unneeded (short sessions, or when it fails), it reads `fallback to built-in summary (…)` during
 Claude Code's automatic compaction, and `not compacted, no built-in summary (…)`
 on `/compact` or the plugin's own request, which leave the conversation as it
 is; `builtinFallback` changes which compactions fall back.
