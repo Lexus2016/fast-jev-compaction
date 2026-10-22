@@ -1,6 +1,6 @@
 {
   "name": "fast-jev-compaction",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Verbatim Jev-guided compaction for Claude Code sessions: stale tool outputs become a note, every call and message stays word for word. Maintained fork of tamaratran/fast-jev-compaction.",
   "license": "MIT",
   "userConfig": {

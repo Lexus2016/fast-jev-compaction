@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.2 — 2026-10-22
+
+Fixes from a cross-review of 0.5.1 (`codex`; `agy` returned no answer).
+
+- A skip, a fallback notice, the log and the toast no longer show the API key
+  or a secret `settings.env` value when the provider echoes it in an error
+  body (`Invalid API key: …`); it was reproduced, and it applied to every
+  trigger. The text goes through the same redaction as the Jev request.
+- The tests for the removal assert the exact messages kept, with their
+  handles, and parse the figures instead of accepting any `\d+%`; a mutation
+  that returned an empty conversation passed all of them before.
+- Not changed: erasing one call of a response that holds several would
+  rebuild that message without its handle (#137). In the 315,495 assistant
+  rows of the 12 largest local transcripts none holds more than one
+  `tool_use`, or a `tool_use` with text, and no user row more than one
+  `tool_result`, the same as the 40 transcripts behind
+  [FORK.md](FORK.md#audit-of-041); the case does not arise from the host.
+
 ## 0.5.1 — 2026-10-22
 
 - `/compact` and the plugin's own `turn.complete` request now also erase the

@@ -10,7 +10,7 @@ import type {
 
 import { jevAsker, type JevFetch, type JevFetchInit, type JevFetchResponse } from '../src/asker.js';
 import { compact, dropStubbedCalls, reductionRatio, resolveOptions } from '../src/compact.js';
-import { looksOpaque } from '../src/redact.js';
+import { looksOpaque, redactSecrets } from '../src/redact.js';
 import { DEFAULT_MODEL } from '../src/request.js';
 import type {
   CompactOptions,
@@ -390,7 +390,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
     if (event.trigger === 'precompute') {
       return { skip: 'fast-jev-compaction does not handle speculative compactions' };
     }
-    const giveUp = (why: string) => {
+    // The API key and the secret `settings.env` values, once read: an error body
+    // from the provider can echo them, and a skip lands in the transcript.
+    let secrets: string[] = [];
+    const giveUp = (reported: string) => {
+      const why = redactSecrets(reported, secrets).text;
       if (mayUseBuiltin(event.trigger, configured.builtinFallback)) {
         notify($, `fallback to built-in summary (${why})`);
         return next(event);
@@ -403,6 +407,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     try {
       const env = await readSettingsEnv($);
       const config = { ...configured, apiKey: await getApiKey($, configured, env) };
+      secrets = [...knownSecrets(env), ...(config.apiKey ? [config.apiKey] : [])];
       // The transcript gets the reduction only; logDecisions adds the counts.
       const detail = (outcome: CompactResult) =>
         config.logDecisions ? summarize(outcome) : `${percent(reductionRatio(outcome))} reduction`;

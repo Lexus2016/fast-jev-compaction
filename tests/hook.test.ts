@@ -518,6 +518,28 @@ describe('built-in summary fallback', () => {
     expect(out).toBe(CORE);
   });
 
+  it('keeps the API key out of every message when the provider echoes it in an error', async () => {
+    const apiKey = ['dummy', 'review', 'key', '123456'].join('-');
+    for (const trigger of ['manual', 'plugin', 'auto']) {
+      const shown: string[] = [];
+      const host = {
+        env: { get: async (name: string) => (name === 'TYPESAFE_API_KEY' ? apiKey : undefined) },
+        settings: { read: async () => ({}) },
+        http: { fetch: async () => ({ status: 401, ok: false, text: `Invalid API key: ${apiKey}` }) },
+        ui: { log: (text: string) => shown.push(text), toast: (text: string) => shown.push(text) },
+        clock: { sleep: (_ms: number, { signal }: { signal: AbortSignal }) => new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')))) },
+      };
+      const out = await registeredHooks({ preserveRecentMessages: 1 }).get('session.compact')!(
+        host,
+        { trigger, messages: transcript() },
+        async () => CORE,
+      );
+      const everything = JSON.stringify([out, shown]);
+      expect(everything).not.toContain(apiKey);
+      expect(everything).toContain('[REDACTED]');
+    }
+  });
+
   it('keeps the skip notice to one short line', async () => {
     const html = async () => ({ status: 403, ok: false, text: `<!DOCTYPE html>${'x'.repeat(2000)}` });
     const { out } = await compactWith('manual', html);
@@ -633,19 +655,39 @@ describe('compaction when stubs do not free enough', () => {
     return { out, delegated, notices };
   }
 
+  // What is left once the call and its result are gone: the engine's own messages, handles intact.
+  const withoutTheCall = {
+    messages: [
+      expect.objectContaining({ handle: 'h-0', toolUses: [] }),
+      expect.objectContaining({ handle: 'h-3', toolUses: [] }),
+      expect.objectContaining({ handle: 'h-4', toolUses: [] }),
+    ],
+  };
+  function expectRemoved(out: unknown, notice: string | undefined) {
+    expect(out).toEqual(withoutTheCall);
+    const [, stubs, after] =
+      notice?.match(/^kept 3\/5 messages, no summary; stubs alone freed (\d+)%, so 1 unneeded calls were removed \((\d+)% reduction\)$/) ?? [];
+    expect(Number(stubs)).toBeLessThan(25);
+    expect(Number(after)).toBeGreaterThanOrEqual(25);
+  }
+  // The two figures of a refusal: what the stubs freed and what removing the calls would have.
+  function expectShortfall(notice: string | undefined) {
+    const [, stubs, removed] = notice?.match(/minimum: (\d+)% reduction; (\d+)% with the unneeded calls removed\)$/) ?? [];
+    expect(Number(removed)).toBeGreaterThan(Number(stubs));
+    expect(Number(removed)).toBeLessThan(25);
+  }
+
   it('removes the calls Jev rated unneeded before falling back to the summary', async () => {
     const { out, delegated, notices } = await run('auto');
     expect(delegated).toBe(false);
-    expect(out).toMatchObject({ messages: expect.any(Array) });
-    expect(notices.at(-1)).toMatch(/^kept 3\/5 messages, no summary; stubs alone freed \d+%, so 1 unneeded calls were removed/);
+    expectRemoved(out, notices.at(-1));
   });
 
   it('removes them for a /compact or a plugin request as well, with no summary', async () => {
     for (const trigger of ['manual', 'plugin']) {
       const { out, delegated, notices } = await run(trigger);
       expect(delegated).toBe(false);
-      expect(out).toMatchObject({ messages: expect.any(Array) });
-      expect(notices.at(-1)).toMatch(/^kept 3\/5 messages, no summary; stubs alone freed \d+%, so 1 unneeded calls were removed/);
+      expectRemoved(out, notices.at(-1));
     }
   });
 
@@ -659,7 +701,8 @@ describe('compaction when stubs do not free enough', () => {
           /^fast-jev-compaction: below 25% minimum: \d+% reduction; \d+% with the unneeded calls removed; conversation left unchanged$/,
         ),
       });
-      expect(notices.at(-1)).toMatch(/^not compacted, no built-in summary \(below 25% minimum: \d+% reduction; \d+% with the unneeded calls removed\)$/);
+      expect(notices.at(-1)).toMatch(/^not compacted, no built-in summary \(below 25% minimum: /);
+      expectShortfall(notices.at(-1));
     }
   });
 
@@ -667,7 +710,8 @@ describe('compaction when stubs do not free enough', () => {
     const { out, delegated, notices } = await run('auto', diluted());
     expect(delegated).toBe(true);
     expect(out).toEqual({ messages: [] });
-    expect(notices.at(-1)).toMatch(/^fallback to built-in summary \(below 25% minimum: \d+% reduction; \d+% with the unneeded calls removed\)$/);
+    expect(notices.at(-1)).toMatch(/^fallback to built-in summary \(below 25% minimum: /);
+    expectShortfall(notices.at(-1));
   });
 });
 
