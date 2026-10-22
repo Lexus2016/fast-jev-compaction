@@ -13,6 +13,12 @@ and everything kept stays verbatim. Also usable as an npm library.
 > [FORK.md](FORK.md) is the audit log: every upstream PR and fork commit that
 > was read, with its verdict.
 
+### Demo
+
+<a href="docs/media/fast-jev-compaction-promo.mp4"><img src="docs/media/fast-jev-compaction-poster.jpg" width="300" alt="Demo still: the same transcript before and after compaction"></a>
+
+[Watch the 30-second demo](docs/media/fast-jev-compaction-promo.mp4).
+
 ### What this fork fixes
 
 - **No "Tool result missing" after compaction** (upstream #137). Cutting one
